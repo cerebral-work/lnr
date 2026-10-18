@@ -4,8 +4,11 @@
 
 use std::fs;
 use std::io::Write;
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lnr_domain::examples::EXAMPLES;
@@ -629,4 +632,73 @@ fn ported_linear_and_cache_commands_work_end_to_end() {
         intake_triage_json[0]["linear_issue_id"].as_str(),
         Some("ENG-123")
     );
+}
+
+/// Run `lnr` with an explicit key against `LINEAR_API_URL`, outside scenario mode.
+fn run_lnr_with_key(args: &[&str], key: &str, api_url: &str) -> CliRun {
+    let output = Command::new(env!("CARGO_BIN_EXE_lnr"))
+        .args(args)
+        .stdin(Stdio::null())
+        .env("NO_COLOR", "1")
+        .env("LINEAR_API_KEY", key)
+        .env("LINEAR_API_URL", api_url)
+        .env("LINEARCTL_TEST_SCENARIO", "")
+        .output()
+        .expect("run lnr");
+    CliRun {
+        code: output.status.code().unwrap_or(-1),
+        out: String::from_utf8_lossy(&output.stdout).to_string(),
+        err: String::from_utf8_lossy(&output.stderr).to_string(),
+    }
+}
+
+#[test]
+fn op_reference_key_fails_before_the_network() {
+    // specs/0007. A local endpoint that counts each connection and drops it, so
+    // every request that reaches the network fails fast in the transport.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind local endpoint");
+    let endpoint = format!("http://{}/graphql", listener.local_addr().unwrap());
+    let connections = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&connections);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            counter.fetch_add(1, Ordering::SeqCst);
+            drop(stream);
+        }
+    });
+    let sentinel = "SentinelVault/lnr-item/credential";
+
+    // Control: a normal key passes through and reaches the network.
+    let normal = run_lnr_with_key(
+        &["whoami", "--json"],
+        "lin_api_test_only_normal_key",
+        &endpoint,
+    );
+    let control = assert_envelope(&normal, 1, "other");
+    assert!(control["message"]
+        .as_str()
+        .unwrap()
+        .contains("HTTP transport failed"));
+    assert_eq!(connections.load(Ordering::SeqCst), 1);
+
+    for args in [["whoami", "--json"], ["ratelimit", "--json"]] {
+        for key in [format!("op://{sentinel}"), format!("  op://{sentinel}\n")] {
+            let res = run_lnr_with_key(&args, &key, &endpoint);
+            assert_eq!(
+                connections.load(Ordering::SeqCst),
+                1,
+                "{args:?} made a network call"
+            );
+            let err = assert_envelope(&res, 3, "auth");
+            let message = err["message"].as_str().unwrap();
+            assert!(
+                message.contains("unresolved 1Password reference"),
+                "{args:?}: {message}"
+            );
+            assert!(!message.contains("HTTP transport failed"), "{args:?}");
+            assert!(err["hint"].as_str().unwrap().contains("opr"));
+            assert!(!res.err.contains(sentinel), "{args:?} leaked the value");
+            assert!(!res.out.contains(sentinel), "{args:?} leaked the value");
+        }
+    }
 }

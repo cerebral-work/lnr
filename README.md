@@ -271,6 +271,10 @@ Full reference: [`docs/spec.md` §6](./docs/spec.md). Product and architecture r
 In-cluster: resolved from [OpenBao](https://openbao.org) via `ExternalSecret`,
 injected as a `secretKeyRef`. A native OAuth `actor=app` path is future work.
 
+An unresolved 1Password reference (`op://…`) in `LINEAR_API_KEY` exits 3
+before any network call. Run `lnr` through `opr` or `op run -- lnr …` so the
+reference resolves ([spec 0007](specs/0007-reject-unresolved-op-reference-key.md)).
+
 ## Build
 
 ```bash

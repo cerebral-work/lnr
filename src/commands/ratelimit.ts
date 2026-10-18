@@ -1,4 +1,5 @@
 import { CliError } from "../lib/errors.js";
+import { apiKeyFromEnv } from "../client.js";
 import { printJson } from "../lib/output.js";
 import { fetchRateLimit, isExhausted, type RateLimitAxis } from "../core/ratelimit.js";
 
@@ -21,11 +22,7 @@ export interface RatelimitOptions {
  * See docs/spec.md §7 item 7.
  */
 export async function ratelimit(opts: RatelimitOptions): Promise<void> {
-  const apiKey = process.env.LINEAR_API_KEY;
-  if (!apiKey) {
-    throw new CliError("auth", "LINEAR_API_KEY is not set.");
-  }
-  const info = await fetchRateLimit(apiKey);
+  const info = await fetchRateLimit(apiKeyFromEnv());
 
   if (opts.json) {
     printJson(info);
