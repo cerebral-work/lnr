@@ -34,14 +34,27 @@ function expectOpReferenceError(err: unknown): void {
 }
 
 describe("LINEAR_API_KEY holding an op:// reference (CER-2926)", () => {
-  test("makeClient fails fast with the auth error and no network call", () => {
+  // The SDK reads globalThis.fetch per request (LinearGraphQLClient.rawRequest),
+  // so each test drives a real SDK request (`.viewer`) through the spy.
+  test("makeClient fails fast with the auth error and no network call", async () => {
     process.env.LINEAR_API_KEY = OP_REFERENCE;
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((() => { throw new Error("network call attempted"); }) as never);
     try {
       let thrown: unknown;
-      try { makeClient(); } catch (err) { thrown = err; }
+      try { await makeClient().viewer; } catch (err) { thrown = err; }
       expectOpReferenceError(thrown);
       expect(fetchSpy).toHaveBeenCalledTimes(0);
+    } finally { fetchSpy.mockRestore(); }
+  });
+
+  test("control: with a normal key the same SDK request reaches fetch", async () => {
+    process.env.LINEAR_API_KEY = NORMAL_KEY;
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((() => { throw new Error("network call attempted"); }) as never);
+    try {
+      let thrown: unknown;
+      try { await makeClient().viewer; } catch (err) { thrown = err; }
+      expect(thrown).toBeDefined();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
     } finally { fetchSpy.mockRestore(); }
   });
 
