@@ -1,6 +1,6 @@
 import { CliError, assertBatchSucceeded, refusedError, usageError } from "../lib/errors.js";
 import { resolveProject, UUID_RE } from "../core/projects.js";
-import { makeClient } from "../client.js";
+import { apiKeyFromEnv, makeClient } from "../client.js";
 import { createIssue, addRelations } from "../core/issues.js";
 import { readStdin, readStdinFor } from "../lib/io.js";
 import { printJson } from "../lib/output.js";
@@ -73,8 +73,7 @@ async function fileBatch(client: ReturnType<typeof makeClient>, opts: FileOption
     return;
   }
 
-  const apiKey = process.env.LINEAR_API_KEY as string;
-  const quota = await fetchRateLimit(apiKey).catch(() => null);
+  const quota = await fetchRateLimit(apiKeyFromEnv()).catch(() => null);
   if (quota && (isExhausted(quota) || (quota.requests.remaining ?? Infinity) < items.length * 3)) {
     throw new CliError("rate_limit",
       `rate budget too low for a ${items.length}-issue batch ` +

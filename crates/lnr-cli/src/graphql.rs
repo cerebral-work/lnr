@@ -21,6 +21,8 @@ use lnr_domain::similarity::score_candidates;
 use serde_json::{json, Value};
 
 const DEFAULT_API_URL: &str = "https://api.linear.app/graphql";
+/// Prefix of a 1Password secret reference, which only `op run` / `op read` resolve.
+const OP_REFERENCE_PREFIX: &str = "op://";
 
 /// Raw HTTP + GraphQL response from Linear.
 #[derive(Debug, Clone)]
@@ -54,6 +56,14 @@ impl LinearClient {
             return Err(CliError::auth(
                 "Missing LINEAR_API_KEY.",
                 "Set LINEAR_API_KEY in the environment (or run `linearctl whoami` to test auth).",
+            ));
+        }
+        // specs/0007: an unresolved 1Password reference fails here, before any
+        // network call, and its value never appears in the error.
+        if api_key.starts_with(OP_REFERENCE_PREFIX) {
+            return Err(CliError::auth(
+                "LINEAR_API_KEY is an unresolved 1Password reference (op://…), not a Linear API key.",
+                "Run lnr through `opr` (or `op run -- lnr …`) so the reference is resolved, or export the resolved key.",
             ));
         }
         let api_url = std::env::var("LINEAR_API_URL")

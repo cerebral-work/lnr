@@ -1,6 +1,26 @@
 import { CliError } from "./lib/errors.js";
 import { LinearClient } from "@linear/sdk";
 
+/** Prefix of a 1Password secret reference, which only `op run` / `op read` resolve. */
+const OP_REFERENCE_PREFIX = "op://";
+
+/**
+ * Read `LINEAR_API_KEY` from the environment, rejecting an unresolved
+ * 1Password reference before any network call (specs/0007, CER-2926). The
+ * value never appears in the error.
+ */
+export function apiKeyFromEnv(): string {
+  const apiKey = process.env.LINEAR_API_KEY;
+  if (!apiKey) {
+    throw new CliError("auth", "LINEAR_API_KEY is not set.", "Set LINEAR_API_KEY in the environment; see README.md → Authentication.");
+  }
+  if (apiKey.trim().startsWith(OP_REFERENCE_PREFIX)) {
+    throw new CliError("auth", "LINEAR_API_KEY is an unresolved 1Password reference (op://…), not a Linear API key.",
+      "Run lnr through `opr` (or `op run -- lnr …`) so the reference is resolved, or export the resolved key.");
+  }
+  return apiKey;
+}
+
 /**
  * Build a {@link LinearClient} from the `LINEAR_API_KEY` environment variable.
  *
@@ -10,11 +30,7 @@ import { LinearClient } from "@linear/sdk";
  * environment at call time.
  */
 export function makeClient(): LinearClient {
-  const apiKey = process.env.LINEAR_API_KEY;
-  if (!apiKey) {
-    throw new CliError("auth", "LINEAR_API_KEY is not set.", "Set LINEAR_API_KEY in the environment; see README.md → Authentication.");
-  }
-  return new LinearClient({ apiKey });
+  return new LinearClient({ apiKey: apiKeyFromEnv() });
 }
 
 /**
