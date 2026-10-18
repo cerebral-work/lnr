@@ -83,3 +83,57 @@ export async function resolveTeam(
   }
   return matched;
 }
+
+export interface CreateTeamParams {
+  key: string;
+  name: string;
+  description?: string;
+}
+
+export interface CreatedTeam {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+}
+
+/**
+ * Create a Linear team by key and name (idempotent if key already exists).
+ */
+export async function createTeam(
+  client: LinearClient,
+  params: CreateTeamParams,
+): Promise<CreatedTeam> {
+  const k = params.key.trim().toUpperCase();
+  const existing = await withRetry(() => client.teams({ filter: { key: { eqIgnoreCase: k } } }));
+  if (existing.nodes[0]) {
+    const t = existing.nodes[0];
+    return {
+      id: t.id,
+      key: t.key,
+      name: t.name,
+      description: t.description ?? null,
+    };
+  }
+  const payload = await withRetry(() =>
+    client.createTeam({
+      key: k,
+      name: params.name.trim(),
+      ...(params.description ? { description: params.description } : {}),
+    }),
+  );
+  if (!payload.success) {
+    throw new Error("Linear reported the team create did not succeed.");
+  }
+  const team = await payload.team;
+  if (!team) {
+    throw new Error("team created but the payload returned no team.");
+  }
+  return {
+    id: team.id,
+    key: team.key,
+    name: team.name,
+    description: team.description ?? null,
+  };
+}
+

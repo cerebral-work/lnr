@@ -56,7 +56,9 @@ make check JOBS=2
 The tests prove three facts:
 
 1. An `op://` key fails with exit code `3` and the message above, and the value does not appear in the output.
-2. No network call occurs. In TypeScript, a `fetch` spy records zero calls. In Rust, `LINEAR_API_URL` points at a closed local port: an `op://` key fails with `auth`, but a normal key reaches the transport and fails with a network error.
+2. No network call occurs.
+   - **TypeScript:** a `fetch` spy records zero calls when an `op://` key drives a real SDK request (`makeClient().viewer`) and `ratelimit`. As a control, the same SDK request with a normal key reaches the spy once.
+   - **Rust:** `LINEAR_API_URL` points at a local listener that counts connections and drops them. A normal key makes one connection and fails in the transport; an `op://` key adds no connection and fails with `auth`.
 3. A normal key passes through unchanged. The `fetch` spy receives it as the `Authorization` header.
 
 ## Notes

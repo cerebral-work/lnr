@@ -20,7 +20,7 @@ import { searchCmd } from "./commands/search.js";
 import { dupcheckCmd } from "./commands/dupcheck.js";
 import { park } from "./commands/park.js";
 import { labelList, labelCreate, labelRename } from "./commands/label.js";
-import { teamList, teamResolve } from "./commands/team.js";
+import { teamCreate, teamList, teamResolve } from "./commands/team.js";
 import { historyCmd } from "./commands/history.js";
 import { templateList, templateValidate, templateFile } from "./commands/template.js";
 import { cycleCmd } from "./commands/cycle.js";
@@ -310,7 +310,7 @@ program
 
 const teamCmd = program
   .command("team")
-  .description("Team lookup: list accessible teams or resolve team keys/names.");
+  .description("Team lookup and creation: list, resolve, or create Linear teams.");
 
 teamCmd
   .command("list")
@@ -326,6 +326,15 @@ teamCmd
   .option("--cache", "read from local SQLite cache instead of live Linear API")
   .option("--json", "emit JSON")
   .action((ref, opts) => teamResolve(ref, opts));
+
+teamCmd
+  .command("create")
+  .description("Create a Linear team by key and name (idempotent).")
+  .argument("<key>", "team key (e.g. CORE)")
+  .argument("<name>", "team name (e.g. 'Core Architecture')")
+  .option("--desc <text>", "optional team description")
+  .option("--json", "emit JSON")
+  .action((key, name, opts) => teamCreate(key, name, opts));
 
 const labelCmd = program
   .command("label")
