@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.30.0](https://github.com/cerebral-work/lnr/compare/v0.29.0...v0.30.0) (2026-10-18)
+
+
+### Features
+
+* **team:** add idempotent team create command (CER-2931) ([1a57694](https://github.com/cerebral-work/lnr/commit/1a57694ff8d14afaaede3c6e01550bd3db0a5c77))
+* **team:** add idempotent team create command (CER-2931) ([288c425](https://github.com/cerebral-work/lnr/commit/288c4255af6b8b9d18287b4d07a1760c156ea7bf))
+
+
+### Bug Fixes
+
+* **auth:** fail fast on an unresolved op:// LINEAR_API_KEY (CER-2926) ([7fccfdf](https://github.com/cerebral-work/lnr/commit/7fccfdfffd8933b9bb27de5ae5331128c4d2d944))
+* **auth:** fail fast on an unresolved op:// LINEAR_API_KEY (CER-2926) ([27751d4](https://github.com/cerebral-work/lnr/commit/27751d48e7f1113678511d2c12f06710ac5277a6))
+
+
+### Documentation
+
+* **specs:** add 0007, reject an unresolved op:// LINEAR_API_KEY (CER-2926) ([842e72f](https://github.com/cerebral-work/lnr/commit/842e72f00702ad7ca1804bc15b23c675a5d42099))
+
 ## [0.29.0](https://github.com/cerebral-work/lnr/compare/v0.28.0...v0.29.0) (2026-10-14)
 
 
