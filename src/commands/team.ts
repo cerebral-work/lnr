@@ -1,5 +1,5 @@
 import { makeClient } from "../client.js";
-import { listTeams, resolveTeam } from "../core/teams.js";
+import { createTeam, listTeams, resolveTeam } from "../core/teams.js";
 import { printJson, printTable } from "../lib/output.js";
 import { notFoundError, usageError } from "../lib/errors.js";
 
@@ -11,6 +11,11 @@ export interface TeamListOptions {
 export interface TeamResolveOptions {
   json?: boolean;
   cache?: boolean;
+}
+
+export interface TeamCreateOptions {
+  desc?: string;
+  json?: boolean;
 }
 
 /**
@@ -112,3 +117,34 @@ export async function teamResolve(ref: string | undefined, opts: TeamResolveOpti
       (team.description ? `  description: ${team.description}\n` : ""),
   );
 }
+
+/**
+ * `linearctl team create <key> <name> [--desc <text>] [--json]` — create a Linear team (idempotent).
+ */
+export async function teamCreate(
+  key: string | undefined,
+  name: string | undefined,
+  opts: TeamCreateOptions,
+): Promise<void> {
+  if (!key || !key.trim() || !name || !name.trim()) {
+    throw usageError("team create requires <key> and <name> (e.g. linearctl team create CORE 'Core Architecture').");
+  }
+  const client = makeClient();
+  const team = await createTeam(client, {
+    key: key.trim(),
+    name: name.trim(),
+    description: opts.desc,
+  });
+
+  if (opts.json) {
+    printJson(team);
+    return;
+  }
+
+  process.stdout.write(
+    `team ${team.name} (${team.key})\n` +
+      `  id:          ${team.id}\n` +
+      (team.description ? `  description: ${team.description}\n` : ""),
+  );
+}
+
