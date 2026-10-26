@@ -1,6 +1,7 @@
 import type { LinearClient } from "@linear/sdk";
 import { withRetry } from "../lib/retry.js";
 import { resolveAssignee } from "./issues.js";
+import { notFoundError, usageError } from "../lib/errors.js";
 import { scopedTeams } from "./issues-query.js";
 
 export interface AuthorComment {
@@ -92,4 +93,29 @@ export async function commentsByAuthor(
   } while (after);
   out.sort((a, b) => b.at.localeCompare(a.at));
   return out.slice(0, cap);
+}
+
+/** Issue-scoped receipt lookup: one bounded page, never a workspace scan. */
+export async function issueComments(
+  client: LinearClient, id: string, opts: { limit?: number; after?: string } = {},
+) {
+  const limit = opts.limit ?? 50;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw usageError("comment limit must be an integer between 1 and 100");
+  }
+  const result = await withRetry(() => client.client.rawRequest<{
+    issue: { id: string; identifier: string; comments: {
+      nodes: Array<{ id: string; body: string; url: string; createdAt: string }>;
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    } } | null;
+  }, Record<string, unknown>>(`query IssueComments($id: String!, $first: Int!, $after: String) {
+    issue(id: $id) { id identifier comments(first: $first, after: $after) {
+      nodes { id body url createdAt }
+      pageInfo { hasNextPage endCursor }
+    } }
+  }`, { id, first: limit, after: opts.after ?? null }));
+  const issue = result.data?.issue;
+  if (!issue) throw notFoundError(`Issue '${id}' was not found.`);
+  return { issue: { id: issue.id, identifier: issue.identifier },
+    comments: issue.comments.nodes, pageInfo: issue.comments.pageInfo };
 }

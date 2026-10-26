@@ -12,22 +12,29 @@ import {
 } from "../core/projects.js";
 import { triage, digest, stale } from "../core/grooming.js";
 import { milestones } from "../core/milestones.js";
+import { issueComments } from "../core/comments.js";
+import { cortexRepoQuery } from "../core/cortex.js";
+import { errorEnvelope } from "../lib/errors.js";
 import { sinceToDate } from "../lib/time.js";
 
 /**
  * Run a core call and shape it into a tool result: the JSON payload as a text
  * block, or an `isError` result carrying the message. Core fns throw on failure;
  * this is the single place that maps those throws to MCP errors so a bad call
- * never crashes the server. (structuredContent + outputSchema is a later polish.)
+ * never crashes the server. Object results also carry structuredContent.
  */
 async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
   try {
     const data = await fn();
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    return {
+      content: [{ type: "text", text: JSON.stringify(data) }],
+      ...(data !== null && typeof data === "object" && !Array.isArray(data)
+        ? { structuredContent: data as Record<string, unknown> } : {}),
+    };
   } catch (err) {
     return {
       content: [
-        { type: "text", text: `error: ${err instanceof Error ? err.message : String(err)}` },
+        { type: "text", text: JSON.stringify(errorEnvelope(err)) },
       ],
       isError: true,
     };
@@ -40,7 +47,9 @@ async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
  * D6: reads are `readOnlyHint`, writes are non-destructive, and no
  * delete/archive tool is exposed at all.
  */
-export function registerTools(server: McpServer, client: LinearClient): void {
+export function registerTools(
+  server: McpServer, client: LinearClient, options: { readOnly?: boolean } = {},
+): void {
   server.registerTool(
     "whoami",
     {
@@ -64,124 +73,134 @@ export function registerTools(server: McpServer, client: LinearClient): void {
     async ({ team }) => run(async () => ({ projects: await listProjects(client, team) })),
   );
 
-  server.registerTool(
-    "file_issue",
-    {
-      title: "File an issue",
-      description:
-        "Create a Linear issue in a team (and optionally a project). Returns identifier + url.",
-      inputSchema: {
-        team: z.string().describe("team key, e.g. CER"),
-        title: z.string(),
-        description: z.string().optional().describe("markdown body"),
-        project: z.string().optional().describe("project id to attach to"),
-        labels: z.array(z.string()).optional().describe("label names"),
-        assignee: z
-          .string()
-          .optional()
-          .describe("assignee: 'me', an email, a display name, or a user id"),
-        priority: z
-          .number()
-          .int()
-          .min(0)
-          .max(4)
-          .optional()
-          .describe("priority: 1=Urgent 2=High 3=Medium 4=Low, 0=unset"),
-        milestone: z
-          .string()
-          .optional()
-          .describe("project milestone (name or id; pair with project for name lookup)"),
+  if (!options.readOnly) {
+    server.registerTool(
+      "file_issue",
+      {
+        title: "File an issue",
+        description:
+          "Create a Linear issue in a team (and optionally a project). Returns identifier + url.",
+        inputSchema: {
+          team: z.string().describe("team key, e.g. CER"),
+          title: z.string(),
+          description: z.string().optional().describe("markdown body"),
+          project: z.string().optional().describe("project id to attach to"),
+          labels: z.array(z.string()).optional().describe("label names"),
+          assignee: z
+            .string()
+            .optional()
+            .describe("assignee: 'me', an email, a display name, or a user id"),
+          priority: z
+            .number()
+            .int()
+            .min(0)
+            .max(4)
+            .optional()
+            .describe("priority: 1=Urgent 2=High 3=Medium 4=Low, 0=unset"),
+          milestone: z
+            .string()
+            .optional()
+            .describe("project milestone (name or id; pair with project for name lookup)"),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    },
-    async ({ team, title, description, project, labels, assignee, priority, milestone }) =>
-      run(() =>
-        createIssue(client, {
-          teamKey: team,
-          title,
-          description,
-          projectId: project,
-          labels,
-          assignee,
-          priority,
-          milestone,
-        }),
-      ),
-  );
+      async ({ team, title, description, project, labels, assignee, priority, milestone }) =>
+        run(() =>
+          createIssue(client, {
+            teamKey: team,
+            title,
+            description,
+            projectId: project,
+            labels,
+            assignee,
+            priority,
+            milestone,
+          }),
+        ),
+    );
+  }
 
-  server.registerTool(
-    "project_create",
-    {
-      title: "Create a project",
-      description: "Create a Linear project under a team. Returns name + url + id.",
-      inputSchema: {
-        name: z.string(),
-        team: z.string().describe("team key, e.g. CER"),
-        description: z.string().optional(),
+  if (!options.readOnly) {
+    server.registerTool(
+      "project_create",
+      {
+        title: "Create a project",
+        description: "Create a Linear project under a team. Returns name + url + id.",
+        inputSchema: {
+          name: z.string(),
+          team: z.string().describe("team key, e.g. CER"),
+          description: z.string().optional(),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    },
-    async ({ name, team, description }) =>
-      run(() => createProject(client, { name, teamKey: team, description })),
-  );
+      async ({ name, team, description }) =>
+        run(() => createProject(client, { name, teamKey: team, description })),
+    );
+  }
 
-  server.registerTool(
-    "issue_update",
-    {
-      title: "Update an issue",
-      description:
-        "Update a Linear issue's state, assignee, labels, project, or priority. State/assignee/labels resolve by name against the issue's team.",
-      inputSchema: {
-        id: z.string().describe("issue id or identifier, e.g. CER-123"),
-        state: z.string().optional().describe("workflow state name, e.g. 'In Progress'"),
-        assignee: z.string().optional().describe("'me', an email, a display name, or a user id"),
-        labels: z.array(z.string()).optional().describe("label names (replaces existing)"),
-        project: z.string().optional().describe("project id to move the issue to"),
-        priority: z.number().int().min(0).max(4).optional().describe("0=None 1=Urgent 2=High 3=Medium 4=Low"),
-        title: z.string().optional().describe("replace the issue title"),
-        description: z.string().optional().describe("replace the description (markdown)"),
+  if (!options.readOnly) {
+    server.registerTool(
+      "issue_update",
+      {
+        title: "Update an issue",
+        description:
+          "Update a Linear issue's state, assignee, labels, project, or priority. State/assignee/labels resolve by name against the issue's team.",
+        inputSchema: {
+          id: z.string().describe("issue id or identifier, e.g. CER-123"),
+          state: z.string().optional().describe("workflow state name, e.g. 'In Progress'"),
+          assignee: z.string().optional().describe("'me', an email, a display name, or a user id"),
+          labels: z.array(z.string()).optional().describe("label names (replaces existing)"),
+          project: z.string().optional().describe("project id to move the issue to"),
+          priority: z.number().int().min(0).max(4).optional().describe("0=None 1=Urgent 2=High 3=Medium 4=Low"),
+          title: z.string().optional().describe("replace the issue title"),
+          description: z.string().optional().describe("replace the description (markdown)"),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-    },
-    async ({ id, state, assignee, labels, project, priority, title, description }) =>
-      run(() =>
-        updateIssue(client, id, {
-          state,
-          assignee,
-          labels,
-          projectId: project,
-          priority,
-          title,
-          description,
-        }),
-      ),
-  );
+      async ({ id, state, assignee, labels, project, priority, title, description }) =>
+        run(() =>
+          updateIssue(client, id, {
+            state,
+            assignee,
+            labels,
+            projectId: project,
+            priority,
+            title,
+            description,
+          }),
+        ),
+    );
+  }
 
-  server.registerTool(
-    "issue_close",
-    {
-      title: "Close an issue",
-      description: "Move a Linear issue to its team's completed state.",
-      inputSchema: { id: z.string().describe("issue id or identifier, e.g. CER-123") },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-    },
-    async ({ id }) => run(() => closeIssue(client, id)),
-  );
-
-  server.registerTool(
-    "comment_issue",
-    {
-      title: "Comment on an issue",
-      description:
-        "Add a comment to a Linear issue. Non-destructive (additive) — the missing write mutation next to issue_update / issue_close.",
-      inputSchema: {
-        id: z.string().describe("issue id or identifier, e.g. CER-123"),
-        body: z.string().describe("comment body (markdown)"),
+  if (!options.readOnly) {
+    server.registerTool(
+      "issue_close",
+      {
+        title: "Close an issue",
+        description: "Move a Linear issue to its team's completed state.",
+        inputSchema: { id: z.string().describe("issue id or identifier, e.g. CER-123") },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    },
-    async ({ id, body }) => run(() => createComment(client, id, body)),
-  );
+      async ({ id }) => run(() => closeIssue(client, id)),
+    );
+  }
+
+  if (!options.readOnly) {
+    server.registerTool(
+      "comment_issue",
+      {
+        title: "Comment on an issue",
+        description:
+          "Add a comment to a Linear issue. Non-destructive (additive) — the missing write mutation next to issue_update / issue_close.",
+        inputSchema: {
+          id: z.string().describe("issue id or identifier, e.g. CER-123"),
+          body: z.string().describe("comment body (markdown)"),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      },
+      async ({ id, body }) => run(() => createComment(client, id, body)),
+    );
+  }
 
   server.registerTool(
     "project_overview_get",
@@ -197,21 +216,39 @@ export function registerTools(server: McpServer, client: LinearClient): void {
     async ({ project }) => run(() => getProjectOverview(client, project)),
   );
 
-  server.registerTool(
-    "project_overview_set",
-    {
-      title: "Set a project overview",
-      description:
-        "Replace a Linear project's overview document with markdown (whole-document replace; refuses empty content).",
-      inputSchema: {
-        project: z.string().describe("project UUID, slug id, or name"),
-        content: z.string().describe("the full overview document as markdown"),
+  if (!options.readOnly) {
+    server.registerTool(
+      "project_overview_set",
+      {
+        title: "Set a project overview",
+        description:
+          "Replace a Linear project's overview document with markdown (whole-document replace; refuses empty content).",
+        inputSchema: {
+          project: z.string().describe("project UUID, slug id, or name"),
+          content: z.string().describe("the full overview document as markdown"),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      async ({ project, content }) =>
+        run(() => setProjectOverview(client, project, content)),
+    );
+  }
+
+  server.registerTool("issue_comments", {
+    description: "Read one bounded page of comments on an issue, including IDs and pagination for write readback.",
+    inputSchema: {
+      id: z.string().min(1),
+      limit: z.number().int().min(1).max(100).optional(),
+      after: z.string().optional(),
     },
-    async ({ project, content }) =>
-      run(() => setProjectOverview(client, project, content)),
-  );
+    annotations: { readOnlyHint: true, idempotentHint: true },
+  }, async ({ id, limit, after }) => run(() => issueComments(client, id, { limit, after })));
+
+  server.registerTool("cortex_repo_query", {
+    description: "Observe a Git checkout through Cortex repo-query/v1. Observation only; no mesh sends or access grants. Requires cortex on PATH.",
+    inputSchema: { directory: z.string().optional().describe("Git checkout directory; defaults to server cwd") },
+    annotations: { readOnlyHint: true, idempotentHint: true },
+  }, async ({ directory }) => run(() => cortexRepoQuery(directory)));
 
   // --- read / grooming tools (CER-1162) ---
 

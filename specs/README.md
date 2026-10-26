@@ -11,3 +11,4 @@ This directory holds the LeanSpec registry for `lnr` (`linearctl`). Every spec i
 | [0005](0005-k8s-operator-crds-and-blackwall.md) | Kubernetes Operator CRDs, Blackwall Digest Contract, and In-Cluster MCP Bridge | complete | high |
 | [0006](0006-intake-plan-submission-and-runbook.md) | Canonical setup runbook and escapement `PlanSubmission` intake mapping | complete | high |
 | [0007](0007-reject-unresolved-op-reference-key.md) | Reject an unresolved `op://` 1Password reference in `LINEAR_API_KEY` before any network call | complete | medium |
+| [0008](0008-bounded-transports-and-mesh-mcp.md) | Bounded transports, read-only MCP, and Cortex evidence integration | complete | high |

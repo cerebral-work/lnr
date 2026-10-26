@@ -94,13 +94,14 @@ impl LinearClient {
         }))
         .map_err(|e| CliError::other(format!("failed to serialize GraphQL payload: {e}"), ""))?;
 
-        let escaped_body = payload.replace('\\', "\\\\").replace('"', "\\\"");
+        let escaped_body = curl_config_escape(&payload);
         let curl_config = format!(
-            "url = \"{}\"\nrequest = \"POST\"\nheader = \"Content-Type: application/json\"\nheader = \"Authorization: {}\"\ndata = \"{}\"\nsilent\nshow-error\ndump-header = \"-\"\n",
-            self.api_url, self.api_key, escaped_body
+            "url = \"{}\"\nrequest = \"POST\"\nheader = \"Content-Type: application/json\"\nheader = \"Authorization: {}\"\ndata-binary = \"{}\"\nsilent\nshow-error\ndump-header = \"-\"\nconnect-timeout = 5\nmax-time = 30\nmax-filesize = 8388608\ncompressed\nproto = \"=http,https\"\n",
+            curl_config_escape(&self.api_url), curl_config_escape(&self.api_key), escaped_body
         );
 
         let mut child = Command::new("curl")
+            .arg("--disable") // Ignore ~/.curlrc (redirects, retries, logging, etc.).
             .arg("--config")
             .arg("-")
             .stdin(Stdio::piped())
@@ -120,18 +121,18 @@ impl LinearClient {
             .map_err(|e| CliError::other(format!("failed waiting on curl: {e}"), ""))?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return Err(CliError::other(
-                format!("HTTP transport failed: {stderr}"),
-                "Verify network connectivity and LINEAR_API_URL.",
+                format!("HTTP transport failed (curl exit {}).", output.status.code().unwrap_or(-1)),
+                "Check network connectivity and LINEAR_API_URL; writes are not retried automatically.",
             ));
         }
 
         let raw_stdout = String::from_utf8_lossy(&output.stdout);
         let (headers, status_code, body_str) = split_http_response(&raw_stdout);
 
-        let parsed: Value = serde_json::from_str(body_str).unwrap_or_else(|_| json!({}));
-        if let Some(errors) = parsed.get("errors").and_then(Value::as_array) {
+        let parsed = serde_json::from_str::<Value>(body_str).ok();
+        let parsed_ref = parsed.as_ref().unwrap_or(&Value::Null);
+        if let Some(errors) = parsed_ref.get("errors").and_then(Value::as_array) {
             if let Some(first) = errors.first() {
                 let msg = first
                     .get("message")
@@ -175,7 +176,12 @@ impl LinearClient {
             }
         }
 
-        let data = parsed.get("data").cloned().unwrap_or_else(|| json!({}));
+        let parsed = parsed.ok_or_else(|| CliError::other("Linear returned invalid JSON.", ""))?;
+        let data = parsed
+            .get("data")
+            .filter(|data| data.is_object())
+            .cloned()
+            .ok_or_else(|| CliError::other("Linear returned no GraphQL data object.", ""))?;
         Ok(RawGraphqlResponse { headers, data })
     }
 
@@ -1661,6 +1667,97 @@ impl LinearClient {
         }))
     }
 
+    /// Read actual milestone metadata; never substitute an empty fixture for API data.
+    pub fn list_milestones(
+        &self,
+        project: Option<&str>,
+        after: Option<&str>,
+    ) -> Result<Value, CliError> {
+        let project_id = match project {
+            Some(value) if is_uuid(value) => Some(value.to_string()),
+            Some(value) => Some(self.resolve_project(value, None)?.id),
+            None => None,
+        };
+        let (query, variables) = if let Some(id) = project_id {
+            (
+                "query ProjectMilestones($id: String!, $after: String) {
+                project(id: $id) { name projectMilestones(first: 100, after: $after) {
+                    nodes { id name targetDate description }
+                    pageInfo { hasNextPage endCursor }
+                } }
+            }",
+                json!({ "id": id, "after": after }),
+            )
+        } else {
+            (
+                "query Milestones($after: String) {
+                projectMilestones(first: 100, after: $after) {
+                    nodes { id name targetDate description }
+                    pageInfo { hasNextPage endCursor }
+                }
+            }",
+                json!({ "after": after }),
+            )
+        };
+        let data = self.execute(query, variables)?;
+        let root = if project.is_some() {
+            data.get("project")
+                .filter(|value| value.is_object())
+                .ok_or_else(|| CliError::not_found("Milestone project was not found.", ""))?
+        } else {
+            &data
+        };
+        let connection = root
+            .get("projectMilestones")
+            .ok_or_else(|| CliError::other("Milestone query returned no connection.", ""))?;
+        if !connection["nodes"].is_array() || !connection["pageInfo"]["hasNextPage"].is_boolean() {
+            return Err(CliError::other(
+                "Milestone query returned an invalid page.",
+                "",
+            ));
+        }
+        Ok(
+            json!({ "project": root.get("name"), "milestones": connection["nodes"],
+            "partial": connection["pageInfo"]["hasNextPage"], "pageInfo": connection["pageInfo"] }),
+        )
+    }
+
+    /// Read a bounded page of comments for independent, issue-scoped write readback.
+    pub fn issue_comments(
+        &self,
+        id: &str,
+        limit: usize,
+        after: Option<&str>,
+    ) -> Result<Value, CliError> {
+        if !(1..=100).contains(&limit) {
+            return Err(CliError::usage(
+                "comment limit must be between 1 and 100",
+                "",
+            ));
+        }
+        let data = self.execute(
+            "query IssueComments($id: String!, $first: Int!, $after: String) {
+                issue(id: $id) { id identifier comments(first: $first, after: $after) {
+                    nodes { id body url createdAt }
+                    pageInfo { hasNextPage endCursor }
+                } }
+            }",
+            json!({ "id": id, "first": limit, "after": after }),
+        )?;
+        let issue = data
+            .get("issue")
+            .filter(|v| v.is_object())
+            .ok_or_else(|| CliError::not_found(format!("issue '{id}' not found"), ""))?;
+        let comments = issue
+            .get("comments")
+            .filter(|v| v.is_object())
+            .ok_or_else(|| CliError::other("issue comments returned no data", ""))?;
+        Ok(json!({
+            "issue": { "id": issue["id"], "identifier": issue["identifier"] },
+            "comments": comments["nodes"], "pageInfo": comments["pageInfo"]
+        }))
+    }
+
     /// Query comments authored since `since_iso` (`lnr comments --author <who>`).
     pub fn comments_by_author(
         &self,
@@ -1924,6 +2021,16 @@ impl LinearClient {
             "content": content,
         }))
     }
+}
+
+// curl config quoted strings use C-style escapes, independently of JSON.
+fn curl_config_escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
 }
 
 fn split_http_response(raw: &str) -> (HashMap<String, String>, Option<u16>, &str) {

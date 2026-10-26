@@ -240,6 +240,11 @@ fn render_cmd_help(cmd: &str, sub: Option<&str>) -> String {
         None => cmd.to_string(),
     };
     let subs = subcommands_for(cmd);
+    let protocol_options = match cmd {
+        "mcp" => "\nOptions: --read-only  Expose read tools only; reject Linear mutations.\n",
+        "comments" => "\nOptions: --issue <ID> --limit <1..100> --after <cursor> (issue-scoped JSON readback).\n",
+        _ => "",
+    };
     let sub_section = if sub.is_none() && !subs.is_empty() {
         format!("\nSubcommands: {}\n", subs.join(", "))
     } else {
@@ -247,7 +252,7 @@ fn render_cmd_help(cmd: &str, sub: Option<&str>) -> String {
     };
     format!(
         "Usage: lnr {target} [options]\n\
-         {sub_section}\n\
+         {sub_section}{protocol_options}\n\
          {EXIT_HELP}\n\
          Examples: linearctl examples {cmd}"
     )
@@ -413,7 +418,7 @@ fn dispatch(
         "beads" => handle_beads(rest, wants_json),
         "plan" => handle_plan(rest, wants_json),
         "mcp" => {
-            serve_mcp_stdio(version)?;
+            serve_mcp_stdio(version, has_flag(rest, "--read-only"))?;
             Ok(())
         }
         "milestone" => handle_milestone(rest, wants_json),
@@ -455,7 +460,7 @@ fn dispatch(
 /// Find the first non-option operand, skipping values consumed by `--flag <val>` options.
 fn first_non_option_operand(cmd: &str, args: &[String]) -> Option<String> {
     let flags_with_values: &[&str] = match cmd {
-        "milestone" => &["--project", "--name", "--target-date", "--desc"],
+        "milestone" => &["--project", "--name", "--target-date", "--desc", "--after"],
         "project" => &[
             "--team",
             "--state",
@@ -1423,9 +1428,12 @@ fn handle_milestone(args: &[String], wants_json: bool) -> Result<(), CliError> {
             Ok(())
         }
         _ => {
-            let _ = LinearClient::from_env()?;
-            let out = json!({ "milestones": [] });
-            print_output(&out, wants_json, "0 milestones");
+            let out = LinearClient::from_env()?.list_milestones(
+                flag_value(args, "--project").as_deref(),
+                flag_value(args, "--after").as_deref(),
+            )?;
+            let count = out["milestones"].as_array().map_or(0, Vec::len);
+            print_output(&out, wants_json, &format!("{count} milestones"));
             Ok(())
         }
     }
@@ -2090,6 +2098,20 @@ fn handle_link(args: &[String], wants_json: bool) -> Result<(), CliError> {
 }
 
 fn handle_comments(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    if let Some(id) = flag_value(args, "--issue") {
+        let limit = flag_value(args, "--limit")
+            .map(|s| s.parse::<usize>())
+            .transpose()
+            .map_err(|_| CliError::usage("--limit must be an integer from 1 to 100", ""))?
+            .unwrap_or(50);
+        let page = LinearClient::from_env()?.issue_comments(
+            &id,
+            limit,
+            flag_value(args, "--after").as_deref(),
+        )?;
+        print_output(&page, true, "");
+        return Ok(());
+    }
     let author = flag_value(args, "--author").unwrap_or_else(|| "me".to_string());
     let since =
         flag_value(args, "--since").unwrap_or_else(|| "2026-01-01T00:00:00.000Z".to_string());

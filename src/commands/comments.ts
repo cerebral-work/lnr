@@ -1,12 +1,14 @@
 import { usageError } from "../lib/errors.js";
 import { makeClient } from "../client.js";
-import { commentsByAuthor } from "../core/comments.js";
+import { commentsByAuthor, issueComments } from "../core/comments.js";
 import { sinceToDate } from "../lib/time.js";
 import { printJson, printTable } from "../lib/output.js";
 import { pc } from "../lib/style.js";
 
 export interface CommentsOptions {
   author?: string;
+  issue?: string;
+  after?: string;
   since?: string;
   team?: string[];
   limit?: string;
@@ -19,6 +21,13 @@ export interface CommentsOptions {
  * sweep. Read-only. See CER-1187.
  */
 export async function commentsCmd(opts: CommentsOptions): Promise<void> {
+  if (opts.issue) {
+    const page = await issueComments(makeClient(), opts.issue, {
+      limit: opts.limit === undefined ? undefined : Number(opts.limit), after: opts.after,
+    });
+    printJson(page);
+    return;
+  }
   if (!opts.author) throw usageError("comments needs --author ('me', an email, or a display name).");
   const client = makeClient();
   const rows = await commentsByAuthor(client, {
