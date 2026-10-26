@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { makeClient } from "../client.js";
 import { registerTools } from "./tools.js";
+import { version } from "../../package.json";
 
 /**
  * `linearctl mcp serve` — run the stdio MCP server exposing the linearctl tools.
@@ -14,17 +15,15 @@ import { registerTools } from "./tools.js";
  *
  * See docs/plugin-spec.md §2–§3.
  */
-export async function serve(): Promise<void> {
+export async function serve(options: { readOnly?: boolean } = {}): Promise<void> {
   const client = makeClient();
 
   const server = new McpServer({
     name: "linearctl",
-    // Matches package.json; the version-sync fix (single source for this and the
-    // CLI `--version`) is tracked separately.
-    version: "0.1.0",
+    version,
   });
 
-  registerTools(server, client);
+  registerTools(server, client, options);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

@@ -1,6 +1,7 @@
 //! `lnr` (`linearctl`) command line entry point.
 
 mod cli;
+mod cortex;
 mod graphql;
 mod mcp;
 mod memory;

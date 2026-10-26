@@ -141,3 +141,33 @@ describe("commentsByAuthor", () => {
     expect(result).toHaveLength(3);
   });
 });
+
+describe("issue-scoped comment readback", () => {
+  test("preserves comment IDs, body and paging without scanning author comments", async () => {
+    const { issueComments } = await import("../src/core/comments.js");
+    const calls: Array<Record<string, unknown>> = [];
+    const client = { client: { rawRequest: async (_query: string, variables: Record<string, unknown>) => {
+      calls.push(variables);
+      return { data: { issue: { id: "uuid", identifier: "CER-1", comments: {
+        nodes: [{ id: "receipt", body: "赤鬼\n🚀", url: "https://example.test/c", createdAt: "2026-10-26" }],
+        pageInfo: { hasNextPage: true, endCursor: "next" },
+      } } } };
+    } } } as unknown as LinearClient;
+    const page = await issueComments(client, "CER-1", { limit: 1, after: "prior" });
+    expect(calls).toEqual([{ id: "CER-1", first: 1, after: "prior" }]);
+    expect(page.comments[0].id).toBe("receipt");
+    expect(page.comments[0].body).toBe("赤鬼\n🚀");
+    expect(page.pageInfo).toEqual({ hasNextPage: true, endCursor: "next" });
+  });
+  test("refuses invalid page sizes before networking", async () => {
+    const { issueComments } = await import("../src/core/comments.js");
+    for (const limit of [0, -1, 101, 1.5, NaN]) {
+      await expect(issueComments({} as LinearClient, "CER-1", { limit })).rejects.toThrow("limit");
+    }
+  });
+  test("reports a missing issue rather than an empty comment page", async () => {
+    const { issueComments } = await import("../src/core/comments.js");
+    const client = { client: { rawRequest: async () => ({ data: { issue: null } }) } } as unknown as LinearClient;
+    await expect(issueComments(client, "CER-1")).rejects.toThrow("not found");
+  });
+});

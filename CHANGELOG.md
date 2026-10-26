@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Read-only MCP mode, issue-scoped comment readback with pagination, and bounded Cortex repository observations in both runtimes.
+
+### Fixed
+
+- Replace the native milestone-list empty stub with real, paginated Linear reads and explicit partial-page evidence.
+
+- Negotiate native MCP protocol versions and report malformed/oversized frames; keep structured results within native token budgets.
+- Bound GraphQL request deadlines and reject missing/invalid data instead of reporting empty success.
+- Preserve Unicode across fragmented operator socket frames, enforce byte limits, and dispatch one request per connection.
+
 ## [0.30.0](https://github.com/cerebral-work/lnr/compare/v0.29.0...v0.30.0) (2026-10-18)
 
 

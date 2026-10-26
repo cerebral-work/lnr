@@ -1,294 +1,201 @@
 /**
- * Unix-domain-socket control transport for the `linearctl operator` daemon
- * (CER-1149).
- *
- * A minimal HTTP-ish request/response protocol over AF_UNIX:
- *
- *   REQUEST  = REQUEST-LINE CRLF *(HEADER CRLF) CRLF LENGTH-DELIMITED-BODY
- *   REQUEST-LINE = "POST" SP PATH  ; or "GET" SP PATH  — no HTTP version, no host
- *   HEADER   = NAME ":" SP VALUE  ; e.g. "Content-Length: 42"
- *   LENGTH-DELIMITED-BODY = body of exactly Content-Length bytes (may be JSON)
- *
- *   RESPONSE = STATUS CRLF *(HEADER CRLF) CRLF LENGTH-DELIMITED-BODY
- *
- * Why not raw HTTP? Bun's `Bun.serve` can listen on a Unix socket, but it speaks
- * a real (stateless, streamed) HTTP/1.1 dialect that is heavy for a one-shot
- * delegate probe. This length-prefixed JSON framing is what `linearctl watch`
- * speaks on its delegate-to-operator branch: connect, send one request, read
- * one response, close. The client connect-timeout ensures the watch fallback
- * fires fast when no daemon is running.
- *
- * Uses `node:net` — Bun supports it. No external deps.
+ * One request/response per Unix stream, using the existing HTTP-ish framing.
+ * Content-Length counts bytes. Decode UTF-8 only after a complete bounded frame.
  */
-
 import { createServer, connect, type Socket, type Server } from "node:net";
 import { chmodSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { homedir } from "node:os";
 
-/** Default socket path — matches the spec (XDG state dir). */
 export const DEFAULT_OPERATOR_SOCKET = `${homedir()}/.local/state/linearctl/operator.sock`;
-
-/** Default connect timeout for the client — fast-fail to the watch fallback. */
 export const DEFAULT_CONNECT_TIMEOUT_MS = 250;
+export const MAX_CONTROL_HEADER_BYTES = 8192;
+export const MAX_CONTROL_BODY_BYTES = 1_048_576;
+const MAX_FRAME_BYTES = MAX_CONTROL_HEADER_BYTES + 4 + MAX_CONTROL_BODY_BYTES;
 
-/** A parsed control request handed to the handler. */
 export interface ControlRequest {
-  /** Method: "GET" or "POST". */
   method: string;
-  /** Path: e.g. "/delegate", "/healthz". */
   path: string;
-  /** Headers (lowercased names). */
   headers: Record<string, string>;
-  /** Raw body bytes (empty when no Content-Length). */
   body: string;
 }
-
-/** The response a handler returns; serialized by the server. */
 export interface ControlResponse {
-  /** HTTP-ish status code (200, 404, 500). */
   status: number;
-  /** Response headers (lowercased names). */
   headers?: Record<string, string>;
-  /** Body text (often JSON). */
   body?: string;
 }
-
-/** A dispatcher maps a request to a response. Throw → 500. */
 export type ControlHandler = (req: ControlRequest) => Promise<ControlResponse> | ControlResponse;
-
-/** A bound control server; call `close()` to shut down (unlinks the socket). */
 export interface ControlServer {
-  /** The socket path actually listening on (after `listen`). */
   readonly socketPath: string;
-  /** Stop listening and unlink the socket file. Idempotent. */
   close: () => Promise<void>;
 }
 
-/**
- * Parse one full request from a buffer. Returns the parsed request + the byte
- * length consumed, or `null` if the buffer does not yet contain a complete
- * request (the server waits for more data).
- */
-function tryParseRequest(buf: string): { req: ControlRequest; consumed: number } | null {
-  const headerEnd = buf.indexOf("\r\n\r\n");
-  if (headerEnd === -1) return null;
-
-  const head = buf.slice(0, headerEnd);
-  const lines = head.split("\r\n");
-  const requestLine = lines.shift();
-  if (!requestLine) return null;
-
-  const parts = requestLine.split(" ");
-  const method = parts[0] ?? "";
-  const path = parts[1] ?? "";
-
-  const headers: Record<string, string> = {};
-  for (const line of lines) {
-    const idx = line.indexOf(":");
-    if (idx === -1) continue;
-    const name = line.slice(0, idx).trim().toLowerCase();
-    const value = line.slice(idx + 1).trim();
-    headers[name] = value;
+/** Grow geometrically rather than recopying the whole body for every fragment. */
+class FrameBuffer {
+  private storage = Buffer.alloc(4096);
+  private length = 0;
+  append(chunk: Buffer): Buffer {
+    const needed = this.length + chunk.length;
+    if (needed > MAX_FRAME_BYTES) throw new Error("control frame too large");
+    if (needed > this.storage.length) {
+      const grown = Buffer.allocUnsafe(Math.min(MAX_FRAME_BYTES, Math.max(needed, this.storage.length * 2)));
+      this.storage.copy(grown, 0, 0, this.length);
+      this.storage = grown;
+    }
+    chunk.copy(this.storage, this.length);
+    this.length = needed;
+    return this.storage.subarray(0, needed);
   }
-
-  const contentLength = headers["content-length"] ? parseInt(headers["content-length"], 10) : 0;
-  if (Number.isNaN(contentLength) || contentLength < 0) return null;
-
-  const bodyStart = headerEnd + 4;
-  if (buf.length < bodyStart + contentLength) return null; // body incomplete
-
-  const body = buf.slice(bodyStart, bodyStart + contentLength);
-  return {
-    req: { method, path, headers, body },
-    consumed: bodyStart + contentLength,
-  };
 }
 
-/** Serialize a response into the wire framing. */
-function serializeResponse(res: ControlResponse): string {
-  const statusText = res.status === 200 ? "OK" : res.status === 404 ? "Not Found" : "Error";
-  const body = res.body ?? "";
-  const headers: Record<string, string> = { ...(res.headers ?? {}) };
-  if (!headers["content-length"]) headers["content-length"] = String(Buffer.byteLength(body, "utf8"));
-
-  let head = `${res.status} ${statusText}\r\n`;
-  for (const [name, value] of Object.entries(headers)) {
-    head += `${name}: ${value}\r\n`;
+function parseFrame(buf: Buffer) {
+  const headerEnd = buf.indexOf("\r\n\r\n");
+  if (headerEnd === -1) {
+    if (buf.length > MAX_CONTROL_HEADER_BYTES) throw new Error("control headers exceed 8 KiB");
+    return null;
   }
-  head += "\r\n";
+  if (headerEnd > MAX_CONTROL_HEADER_BYTES) throw new Error("control headers exceed 8 KiB");
+  const lines = buf.subarray(0, headerEnd).toString("utf8").split("\r\n");
+  const start = lines.shift() ?? "";
+  const headers: Record<string, string> = Object.create(null);
+  for (const line of lines) {
+    const index = line.indexOf(":");
+    const name = line.slice(0, index).toLowerCase();
+    const value = line.slice(index + 1).trim();
+    if (index < 1 || !/^[a-z0-9-]+$/.test(name) || Object.hasOwn(headers, name)) {
+      throw new Error("invalid or duplicate control header");
+    }
+    headers[name] = value;
+  }
+  const lengthText = headers["content-length"] ?? "0";
+  if (!/^(0|[1-9][0-9]*)$/.test(lengthText)) throw new Error("invalid control Content-Length");
+  const length = Number(lengthText);
+  if (!Number.isSafeInteger(length) || length > MAX_CONTROL_BODY_BYTES) {
+    throw new Error("control body exceeds 1 MiB");
+  }
+  const end = headerEnd + 4 + length;
+  if (buf.length < end) return null;
+  return { start, headers, body: buf.subarray(headerEnd + 4, end).toString("utf8") };
+}
+
+function serializeResponse(res: ControlResponse): string {
+  const body = res.body ?? "";
+  if (!Number.isInteger(res.status) || res.status < 100 || res.status > 599 ||
+      Buffer.byteLength(body) > MAX_CONTROL_BODY_BYTES) throw new Error("invalid control response");
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(res.headers ?? {})) {
+    if (!/^[a-zA-Z0-9-]+$/.test(name) || /[\r\n]/.test(value)) throw new Error("invalid response header");
+    if (name.toLowerCase() !== "content-length") headers[name.toLowerCase()] = value;
+  }
+  headers["content-length"] = String(Buffer.byteLength(body));
+  const statusText = res.status === 200 ? "OK" : res.status === 404 ? "Not Found" : "Error";
+  const head = `${res.status} ${statusText}\r\n` +
+    Object.entries(headers).map(([name, value]) => `${name}: ${value}\r\n`).join("") + "\r\n";
+  if (Buffer.byteLength(head) > MAX_CONTROL_HEADER_BYTES) throw new Error("control headers exceed 8 KiB");
   return head + body;
 }
 
-/**
- * Start the control server on a Unix socket.
- *
- * `mkdir -p`s the parent dir, unlinks any stale socket file first (so a prior
- * crash doesn't EADDRINUSE), and registers a `close` that unlinks again on
- * shutdown (load-bearing: a crashing daemon must not orphan the socket).
- */
+/** Bound ingress time and memory; pause reads before invoking the single handler. */
 export function startControlServer(
   handler: ControlHandler,
-  opts: { socketPath?: string } = {},
+  opts: { socketPath?: string; requestTimeoutMs?: number } = {},
 ): Promise<ControlServer> {
   const socketPath = opts.socketPath ?? DEFAULT_OPERATOR_SOCKET;
-
-  try {
-    // mode is masked by umask at creation; the explicit chmod below makes the
-    // permission a guarantee, not a umask accident.
-    mkdirSync(dirname(socketPath), { recursive: true, mode: 0o700 });
-    chmodSync(dirname(socketPath), 0o700);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
-      return Promise.reject(err);
-    }
-  }
-
+  mkdirSync(dirname(socketPath), { recursive: true, mode: 0o700 });
+  chmodSync(dirname(socketPath), 0o700);
+  const sockets = new Set<Socket>();
   const { promise, resolve, reject } = Promise.withResolvers<ControlServer>();
-
-  const server: Server = createServer((socket: Socket) => {
-    let buf = "";
-    socket.setEncoding("utf8");
-
-    socket.on("data", (chunk: Buffer | string) => {
-      buf += chunk.toString("utf8");
-      // Drain all complete requests in the buffer (keep-alive could batch).
-      for (;;) {
-        const parsed = tryParseRequest(buf);
-        if (!parsed) break;
-        buf = buf.slice(parsed.consumed);
-        const { req } = parsed;
-
-        Promise.resolve()
-          .then(() => handler(req))
-          .then((res) => socket.write(serializeResponse(res)))
-          .catch((err) => {
-            const msg = err instanceof Error ? err.message : String(err);
-            socket.write(serializeResponse({
-              status: 500,
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ ok: false, error: msg }),
-            }));
-          })
-          .finally(() => socket.end());
+  const server: Server = createServer((socket) => {
+    sockets.add(socket);
+    const buffer = new FrameBuffer();
+    let processing = false;
+    const timer = setTimeout(() => socket.destroy(), opts.requestTimeoutMs ?? 30_000);
+    socket.on("close", () => { clearTimeout(timer); sockets.delete(socket); });
+    socket.on("error", () => {});
+    socket.on("data", (chunk: Buffer) => {
+      if (processing) return;
+      try {
+        const parsed = parseFrame(buffer.append(chunk));
+        if (!parsed) return;
+        const match = /^(GET|POST) (\/\S*)$/.exec(parsed.start);
+        if (!match) throw new Error("invalid control request line");
+        processing = true;
+        clearTimeout(timer);
+        socket.pause();
+        const req: ControlRequest = { method: match[1], path: match[2], headers: parsed.headers, body: parsed.body };
+        Promise.resolve().then(() => handler(req))
+          .then((res) => { if (!socket.destroyed) socket.end(serializeResponse(res)); })
+          .catch(() => {
+            if (!socket.destroyed) socket.end(serializeResponse({ status: 500, body: "control handler failed" }));
+          });
+      } catch {
+        processing = true;
+        clearTimeout(timer);
+        socket.end(serializeResponse({ status: 400, body: "invalid control frame" }));
       }
     });
-
-    socket.on("error", () => {
-      // ECONNRESET on a peer that severed mid-request: swallow, don't crash.
-    });
   });
-
   server.once("error", reject);
-
   server.listen(socketPath, () => {
     server.removeListener("error", reject);
-
-    // The socket is a trust boundary: /delegate feeds the event loop with the
-    // daemon's app-actor token and no HMAC (local access = trusted). That
-    // boundary is only real if the filesystem enforces it — owner-only, not
-    // whatever the umask happened to be (some container images run umask 000).
-    try {
-      chmodSync(socketPath, 0o600);
-    } catch {
-      // best-effort on exotic filesystems; the 0700 parent dir still gates
-    }
-
-    let closed = false;
-    const close = async (): Promise<void> => {
-      if (closed) return;
-      closed = true;
-      const { promise: closedP, resolve: resolveClose } = Promise.withResolvers<void>();
-      server.close(() => resolveClose());
-      await closedP;
-      try {
-        unlinkSync(socketPath);
-      } catch {
-        // already gone — fine
-      }
-    };
-
+    try { chmodSync(socketPath, 0o600); } catch { /* 0700 parent still gates access. */ }
+    let closing: Promise<void> | undefined;
+    const close = (): Promise<void> => closing ??= new Promise<void>((done) => {
+      for (const socket of sockets) socket.destroy();
+      server.close(() => {
+        try { unlinkSync(socketPath); } catch { /* already gone */ }
+        done();
+      });
+    });
     resolve({ socketPath, close });
   });
-
   return promise;
 }
 
-/** A one-shot client request/response over the Unix socket. */
 export interface ControlClient {
-  /** Send a request and read exactly one response; throws on timeout/socket error. */
   request: (method: string, path: string, body?: string) => Promise<ControlResponse>;
 }
 
-/**
- * Make a control client. Connection is lazy per-request. The connect timeout
- * ensures `linearctl watch`'s delegate attempt fails fast to the fallback path
- * when no daemon is listening (ECONNREFUSED resolves before the timeout).
- */
+/** A total deadline covers connect, headers, and the complete response body. */
 export function makeControlClient(
   socketPath: string,
   opts: { connectTimeoutMs?: number } = {},
 ): ControlClient {
-  const connectTimeoutMs = opts.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
-
-  const request = (method: string, path: string, body: string = ""): Promise<ControlResponse> => {
-    const { promise, resolve, reject } = Promise.withResolvers<ControlResponse>();
-    const socket = connect(socketPath);
-    const bodyBuf = Buffer.from(body, "utf8");
-    const head =
-      `${method} ${path}\r\n` +
-      `Content-Length: ${bodyBuf.length}\r\n` +
-      `\r\n`;
-
-    const cleanup = () => {
-      socket.removeAllListeners();
-      socket.destroy();
-    };
-
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error(`control socket ${method} ${path} timed out after ${connectTimeoutMs}ms`));
-    }, connectTimeoutMs);
-
-    socket.once("error", (err) => {
-      clearTimeout(timer);
-      cleanup();
-      reject(err);
-    });
-
-    socket.once("connect", () => {
-      socket.write(head);
-      if (bodyBuf.length) socket.write(bodyBuf);
-
-      let buf = "";
-      socket.setEncoding("utf8");
-      socket.on("data", (chunk: Buffer | string) => {
-        buf += chunk.toString("utf8");
-        const headerEnd = buf.indexOf("\r\n\r\n");
-        if (headerEnd === -1) return;
-
-        const statusLine = buf.slice(0, buf.indexOf("\r\n"));
-        const status = parseInt(statusLine.split(" ")[0] ?? "500", 10);
-        const headLines = buf.slice(0, headerEnd).split("\r\n").slice(1);
-        const headers: Record<string, string> = {};
-        for (const line of headLines) {
-          const idx = line.indexOf(":");
-          if (idx === -1) continue;
-          headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
-        }
-        const contentLength = headers["content-length"] ? parseInt(headers["content-length"], 10) : 0;
-        const bodyStart = headerEnd + 4;
-        if (buf.length < bodyStart + contentLength) return; // body incomplete
-
+  const timeoutMs = opts.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
+  const request = (method: string, path: string, body = ""): Promise<ControlResponse> => {
+    if (!/^(GET|POST)$/.test(method) || !/^\/\S*$/.test(path) ||
+        Buffer.byteLength(body) > MAX_CONTROL_BODY_BYTES) return Promise.reject(new Error("invalid control request"));
+    return new Promise((resolve, reject) => {
+      const socket = connect(socketPath);
+      const buffer = new FrameBuffer();
+      let settled = false;
+      const finish = (error?: Error, response?: ControlResponse) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
-        const respBody = buf.slice(bodyStart, bodyStart + contentLength);
-        cleanup();
-        resolve({ status, headers, body: respBody });
+        socket.destroy();
+        if (error) reject(error);
+        else if (response) resolve(response);
+      };
+      const timer = setTimeout(() => finish(new Error(
+        `control socket ${method} ${path} timed out after ${timeoutMs}ms`,
+      )), timeoutMs);
+      socket.once("error", (error) => finish(error));
+      socket.once("end", () => finish(new Error("control response ended before a complete frame")));
+      socket.once("close", () => finish(new Error("control socket closed before a complete frame")));
+      socket.once("connect", () => {
+        socket.write(`${method} ${path}\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+      });
+      socket.on("data", (chunk: Buffer) => {
+        try {
+          const parsed = parseFrame(buffer.append(chunk));
+          if (!parsed) return;
+          const match = /^([1-5][0-9]{2}) .+$/.exec(parsed.start);
+          if (!match) throw new Error("invalid control response status");
+          finish(undefined, { status: Number(match[1]), headers: parsed.headers, body: parsed.body });
+        } catch (error) { finish(error instanceof Error ? error : new Error("invalid control response")); }
       });
     });
-
-    return promise;
   };
-
   return { request };
 }

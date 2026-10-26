@@ -282,8 +282,10 @@ program
   .option("--author <who>", "'me', an email, a display name, or a user id")
   .option("--since <window>", "look-back window (e.g. 7d, 24h)", "7d")
   .option("--team <key...>", "restrict to issues in team key(s)")
-  .option("--limit <n>", "max comments", "200")
+  .option("--limit <n>", "max comments (author: 200; issue: 50, max 100)")
   .option("--json", "emit JSON")
+  .option("--issue <id>", "Read a bounded page of comments on one issue (JSON).")
+  .option("--after <cursor>", "Continue issue comments from the previous page.")
   .action((opts) => commentsCmd(opts));
 
 program
@@ -851,7 +853,8 @@ const mcpCmd = program
 mcpCmd
   .command("serve")
   .description("Run the stdio MCP server exposing linearctl's tools.")
-  .action(() => serve());
+  .option("--read-only", "Expose read tools only; reject Linear mutations.")
+  .action((opts) => serve({ readOnly: opts.readOnly }));
 
 const authCmd = program
   .command("auth")

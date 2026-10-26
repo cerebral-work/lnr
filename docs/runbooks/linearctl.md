@@ -228,3 +228,7 @@ lnr mcp serve
 # Validate CRDs and operator configuration in dry-run mode
 lnr operator --dry-run --json
 ```
+
+## Agent protocol integration
+
+See [Agent protocols and evidence readback](../features/agent-protocols.md) for `mcp serve --read-only`, issue-scoped comment readback, Cortex repository observations and network/IPC limits.

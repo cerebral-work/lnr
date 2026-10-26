@@ -48,3 +48,5 @@ Commit ticket title and enters the dogfood filing loop (ADR-0005).
 - **Gap-filler** — each command complements an interactive skill or fills a
   batch/CI hole the MCP server doesn't cover.
 - **Honest** — no stubs; ship a verified body or don't ship.
+
+- [Agent protocols and evidence readback](agent-protocols.md) — read-only MCP, comment receipts, Cortex context and transport limits.

@@ -1,6 +1,6 @@
 //! Native Rust stdio Model Context Protocol (MCP) server (`lnr mcp serve`).
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
 
 use lnr_domain::bm25::{Bm25IssueDoc, Bm25IssueIndex};
 use lnr_domain::enterprise::MeshCellDiagnostic;
@@ -25,9 +25,32 @@ use crate::store::{list_handoffs, list_templates};
 
 /// Return the MCP tool catalog exposed by `lnr mcp serve`.
 #[must_use]
-pub fn mcp_tools_list() -> Value {
-    json!({
+pub fn mcp_tools_list(read_only: bool) -> Value {
+    let mut catalog = json!({
         "tools": [
+            {
+                "name": "milestone_list",
+                "description": "Read one real page of project milestone metadata, with explicit partial/pageInfo evidence.",
+                "inputSchema": { "type": "object", "properties": {
+                    "project": { "type": "string" }, "after": { "type": "string" }
+                } }
+            },
+            {
+                "name": "issue_comments",
+                "description": "Read a bounded page of issue comments, with IDs and pagination for write readback.",
+                "inputSchema": { "type": "object", "required": ["id"], "properties": {
+                    "id": { "type": "string" },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+                    "after": { "type": "string" }
+                } }
+            },
+            {
+                "name": "cortex_repo_query",
+                "description": "Observe a Git checkout through Cortex repo-query/v1. Observation only, no mesh sends. Requires cortex on PATH.",
+                "inputSchema": { "type": "object", "properties": {
+                    "directory": { "type": "string", "description": "Git checkout; defaults to server cwd" }
+                } }
+            },
             {
                 "name": "whoami",
                 "description": "Verify Linear authentication and return viewer + organization metadata.",
@@ -240,7 +263,24 @@ pub fn mcp_tools_list() -> Value {
                 }
             }
         ]
-    })
+    });
+    if let Some(tools) = catalog.get_mut("tools").and_then(Value::as_array_mut) {
+        for tool in tools.iter_mut() {
+            let mutation = is_mutation(tool["name"].as_str().unwrap_or_default());
+            tool["annotations"] = json!({
+                "readOnlyHint": !mutation, "destructiveHint": false,
+                "idempotentHint": !mutation
+            });
+        }
+        if read_only {
+            tools.retain(|tool| !is_mutation(tool["name"].as_str().unwrap_or_default()));
+        }
+    }
+    catalog
+}
+
+fn is_mutation(name: &str) -> bool {
+    matches!(name, "file_issue" | "comment_issue" | "issue_close")
 }
 
 /// Dispatch one MCP `tools/call` invocation and return its JSON payload.
@@ -258,6 +298,32 @@ pub fn dispatch_mcp_tool(name: &str, args: &Value) -> Result<Value, CliError> {
     }
 
     match name {
+        "milestone_list" => LinearClient::from_env()?.list_milestones(
+            args.get("project").and_then(Value::as_str),
+            args.get("after").and_then(Value::as_str),
+        ),
+        "cortex_repo_query" => {
+            crate::cortex::repo_query(args.get("directory").and_then(Value::as_str))
+        }
+        "issue_comments" => {
+            let id = args
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| CliError::usage("issue_comments requires 'id'", ""))?;
+            let limit = match args.get("limit") {
+                None => 50,
+                Some(value) => value
+                    .as_u64()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .filter(|n| (1..=100).contains(n))
+                    .ok_or_else(|| CliError::usage("limit must be an integer from 1 to 100", ""))?,
+            };
+            LinearClient::from_env()?.issue_comments(
+                id,
+                limit,
+                args.get("after").and_then(Value::as_str),
+            )
+        }
         "whoami" => {
             let client = LinearClient::from_env()?;
             let res = client.whoami()?;
@@ -564,122 +630,173 @@ pub fn dispatch_mcp_tool(name: &str, args: &Value) -> Result<Value, CliError> {
     }
 }
 
-/// Run the JSON-RPC 2.0 MCP server loop over `stdin` / `stdout`.
-pub fn serve_mcp_stdio(version: &str) -> Result<(), CliError> {
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
+const MAX_FRAME_BYTES: u64 = 1_048_576;
+const PROTOCOL_VERSIONS: &[&str] = &[
+    "2025-11-25",
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+    "2024-10-07",
+];
 
-    for line_res in stdin.lock().lines() {
-        let Ok(line) = line_res else {
-            break;
-        };
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
+fn rpc_error(id: Value, code: i32, message: &str) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
+}
+
+fn rpc_request(req: &Value, req_id: Value, version: &str, read_only: bool) -> Value {
+    let method = req["method"].as_str().unwrap_or_default();
+    match method {
+        "initialize" => {
+            let requested = req["params"]["protocolVersion"]
+                .as_str()
+                .unwrap_or_default();
+            let protocol = if PROTOCOL_VERSIONS.contains(&requested) {
+                requested
+            } else {
+                PROTOCOL_VERSIONS[0]
+            };
+            json!({ "jsonrpc": "2.0", "id": req_id, "result": {
+                "protocolVersion": protocol, "capabilities": { "tools": {} },
+                "serverInfo": { "name": "lnr", "version": version }
+            }})
         }
-        let Ok(req) = serde_json::from_str::<Value>(trimmed) else {
-            continue;
-        };
-        let id = req.get("id").cloned();
-        let method = req
-            .get("method")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        "ping" => json!({ "jsonrpc": "2.0", "id": req_id, "result": {} }),
+        "tools/list" => {
+            json!({ "jsonrpc": "2.0", "id": req_id, "result": mcp_tools_list(read_only) })
+        }
+        "tools/call" => {
+            let params = req.get("params").cloned().unwrap_or_else(|| json!({}));
+            let tool_name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let arguments = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            if !params.is_object() || tool_name.is_empty() || !arguments.is_object() {
+                return rpc_error(
+                    req_id,
+                    -32602,
+                    "tools/call requires a name and object arguments",
+                );
+            }
+            if read_only && is_mutation(tool_name) {
+                return json!({ "jsonrpc": "2.0", "id": req_id, "result": {
+                    "content": [{ "type": "text", "text": "Mutations are disabled by --read-only." }],
+                    "isError": true
+                }});
+            }
+            if !mcp_tools_list(false)["tools"]
+                .as_array()
+                .is_some_and(|tools| tools.iter().any(|tool| tool["name"] == tool_name))
+            {
+                return rpc_error(req_id, -32602, "Unknown tool");
+            }
+            let max_tokens_res = opt_max_tokens(&arguments);
+            match max_tokens_res {
+                Err(msg) => json!({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": [{ "type": "text", "text": msg }],
+                        "isError": true
+                    }
+                }),
+                Ok(max_tokens) => match dispatch_mcp_tool(tool_name, &arguments) {
+                    Ok(val) => {
+                        let raw_text =
+                            serde_json::to_string(&val).unwrap_or_else(|_| val.to_string());
+                        let text = match max_tokens {
+                            Some(budget) => budget_json_response(&raw_text, budget),
+                            None => raw_text,
+                        };
+                        let mut response = json!({
+                           "jsonrpc": "2.0",
+                           "id": req_id,
+                           "result": {
+                               "content": [{ "type": "text", "text": text }],
+                               "isError": false
+                           }
+                        });
+                        if val.is_object() && max_tokens.is_none() {
+                            response["result"]["structuredContent"] = val;
+                        }
+                        response
+                    }
+                    Err(err) => {
+                        let secret = std::env::var("LINEAR_API_KEY").ok();
+                        let text = serde_json::to_string_pretty(&error_envelope(
+                            &err,
+                            "",
+                            secret.as_deref(),
+                        ))
+                        .unwrap_or_else(|_| "MCP tool failed".to_string());
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": req_id,
+                            "result": {
+                                "content": [{ "type": "text", "text": text }],
+                                "isError": true
+                            }
+                        })
+                    }
+                },
+            }
+        }
+        _ => rpc_error(req_id, -32601, "Method not found"),
+    }
+}
 
-        // Notifications have no `id` and expect no response.
-        let Some(req_id) = id else {
+/// Run sequential, byte-bounded JSON-RPC frames over stdin/stdout.
+pub fn serve_mcp_stdio(version: &str, read_only: bool) -> Result<(), CliError> {
+    let stdin = io::stdin();
+    let mut reader = stdin.lock();
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    loop {
+        let mut bytes = Vec::new();
+        let read = reader
+            .by_ref()
+            .take(MAX_FRAME_BYTES + 1)
+            .read_until(b'\n', &mut bytes)
+            .map_err(|_| CliError::other("Failed reading MCP frame.", ""))?;
+        if read == 0 {
+            break;
+        }
+        let oversized = bytes.len() as u64 > MAX_FRAME_BYTES;
+        let response = if oversized {
+            rpc_error(Value::Null, -32600, "MCP frame exceeds 1 MiB")
+        } else if bytes.iter().all(u8::is_ascii_whitespace) {
             continue;
-        };
-
-        let response = match method {
-            "initialize" => json!({
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "result": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": { "tools": {} },
-                    "serverInfo": {
-                        "name": "lnr",
-                        "version": version
+        } else {
+            match serde_json::from_slice::<Value>(&bytes) {
+                Err(_) => rpc_error(Value::Null, -32700, "Parse error"),
+                Ok(req) => {
+                    if !req.is_object()
+                        || req["jsonrpc"] != "2.0"
+                        || !req["method"].is_string()
+                        || req
+                            .get("id")
+                            .is_some_and(|id| !id.is_string() && !id.is_number())
+                    {
+                        rpc_error(Value::Null, -32600, "Invalid request")
+                    } else if let Some(id) = req.get("id") {
+                        rpc_request(&req, id.clone(), version, read_only)
+                    } else {
+                        continue;
                     }
                 }
-            }),
-            "ping" => json!({
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "result": {}
-            }),
-            "tools/list" => json!({
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "result": mcp_tools_list()
-            }),
-            "tools/call" => {
-                let params = req.get("params").cloned().unwrap_or_else(|| json!({}));
-                let tool_name = params
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                let arguments = params
-                    .get("arguments")
-                    .cloned()
-                    .unwrap_or_else(|| json!({}));
-                let max_tokens_res = opt_max_tokens(&arguments);
-                match max_tokens_res {
-                    Err(msg) => json!({
-                        "jsonrpc": "2.0",
-                        "id": req_id,
-                        "result": {
-                            "content": [{ "type": "text", "text": msg }],
-                            "isError": true
-                        }
-                    }),
-                    Ok(max_tokens) => match dispatch_mcp_tool(tool_name, &arguments) {
-                        Ok(val) => {
-                            let raw_text = serde_json::to_string_pretty(&val)
-                                .unwrap_or_else(|_| val.to_string());
-                            let text = match max_tokens {
-                                Some(budget) => budget_json_response(&raw_text, budget),
-                                None => raw_text,
-                            };
-                            json!({
-                                "jsonrpc": "2.0",
-                                "id": req_id,
-                                "result": {
-                                    "content": [{ "type": "text", "text": text }],
-                                    "isError": false
-                                }
-                            })
-                        }
-                        Err(err) => {
-                            let text =
-                                serde_json::to_string_pretty(&error_envelope(&err, "", None))
-                                    .unwrap_or_else(|_| err.message.clone());
-                            json!({
-                                "jsonrpc": "2.0",
-                                "id": req_id,
-                                "result": {
-                                    "content": [{ "type": "text", "text": text }],
-                                    "isError": true
-                                }
-                            })
-                        }
-                    },
-                }
             }
-            _ => json!({
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {
-                    "code": -32601,
-                    "message": format!("Method not found: {method}")
-                }
-            }),
         };
-
-        if let Ok(serialized) = serde_json::to_string(&response) {
-            let _ = writeln!(stdout, "{serialized}");
-            let _ = stdout.flush();
+        serde_json::to_writer(&mut writer, &response)
+            .map_err(|_| CliError::other("Failed serializing MCP response.", ""))?;
+        writer
+            .write_all(b"\n")
+            .and_then(|()| writer.flush())
+            .map_err(|_| CliError::other("Failed writing MCP response.", ""))?;
+        if oversized {
+            break;
         }
     }
     Ok(())
