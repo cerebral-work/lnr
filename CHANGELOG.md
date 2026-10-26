@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.31.0](https://github.com/cerebral-work/lnr/compare/v0.30.0...v0.31.0) (2026-10-26)
+
+
+### Features
+
+* **agent:** add bounded transports and Cortex MCP evidence tools ([4db4a0b](https://github.com/cerebral-work/lnr/commit/4db4a0b47d07479d648ce431d41ce5abc60d6968))
+* **agent:** add bounded transports and Cortex MCP evidence tools ([9e522ba](https://github.com/cerebral-work/lnr/commit/9e522ba84c4ba02ebb88d9e99c28b182270b588e))
+
 ## [Unreleased]
 
 ### Added
