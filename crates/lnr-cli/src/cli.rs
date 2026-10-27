@@ -845,7 +845,12 @@ fn handle_show(args: &[String], wants_json: bool) -> Result<(), CliError> {
         .get("title")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    print_output(&issue, wants_json, &format!("{id}: {title}"));
+    let comment_count = issue["comments"]["nodes"].as_array().map_or(0, Vec::len);
+    print_output(
+        &issue,
+        wants_json,
+        &format!("{id}: {title} ({comment_count} comment(s))"),
+    );
     Ok(())
 }
 

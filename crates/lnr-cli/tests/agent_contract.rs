@@ -315,6 +315,30 @@ fn update_stdin_and_dry_run_previews_and_scenarios() {
 }
 
 #[test]
+fn show_includes_issue_comments() {
+    let shown = run_lnr(&["show", "ENG-123", "--json"], "", Some("mock"));
+    assert_eq!(shown.code, 0, "stderr={}", shown.err);
+    let json: Value = serde_json::from_str(&shown.out).unwrap();
+    let comments = json["comments"]["nodes"]
+        .as_array()
+        .expect("show --json carries comments.nodes");
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0]["body"].as_str(), Some("Verified live"));
+    assert_eq!(
+        json["comments"]["pageInfo"]["hasNextPage"].as_bool(),
+        Some(false)
+    );
+
+    let human = run_lnr(&["show", "ENG-123"], "", Some("mock"));
+    assert_eq!(human.code, 0, "stderr={}", human.err);
+    assert!(
+        human.out.contains("1 comment"),
+        "human summary names the comment count: {}",
+        human.out
+    );
+}
+
+#[test]
 fn handoff_create_show_and_missing_lookup_work_end_to_end() {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

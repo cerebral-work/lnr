@@ -13,6 +13,7 @@
 ### Added
 
 - Read-only MCP mode, issue-scoped comment readback with pagination, and bounded Cortex repository observations in both runtimes.
+- `lnr show` returns the issue's comments (`comments.nodes`, first 50, with `pageInfo`) and names the count in the human summary; before this the JSON had no `comments` key, so a read-back after `lnr comment` looked like a failed write.
 
 ### Fixed
 

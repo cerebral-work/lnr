@@ -501,7 +501,19 @@ impl LinearClient {
                                 "state": { "name": "Todo", "type": "unstarted" },
                                 "assignee": null,
                                 "project": { "name": "Core Platform" },
-                                "labels": { "nodes": [{ "name": "agent-eligible" }, { "name": "bug" }] }
+                                "labels": { "nodes": [{ "name": "agent-eligible" }, { "name": "bug" }] },
+                                "comments": {
+                                    "nodes": [
+                                        {
+                                            "id": "cm1",
+                                            "body": "Verified live",
+                                            "url": "https://example.com/cm1",
+                                            "createdAt": "2026-10-14T00:00:00.000Z",
+                                            "user": { "id": "u1", "name": "Alice", "displayName": "Alice" }
+                                        }
+                                    ],
+                                    "pageInfo": { "hasNextPage": false, "endCursor": null }
+                                }
                             }
                         }),
                     })
@@ -1210,6 +1222,10 @@ impl LinearClient {
                     projectMilestone { id name }
                     parent { id identifier title }
                     labels { nodes { id name color } }
+                    comments(first: 50) {
+                        nodes { id body url createdAt user { id name displayName } }
+                        pageInfo { hasNextPage endCursor }
+                    }
                 }
             }",
             json!({ "id": id_or_identifier.trim() }),
