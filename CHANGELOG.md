@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.31.2](https://github.com/cerebral-work/lnr/compare/v0.31.1...v0.31.2) (2026-10-27)
+
+
+### Bug Fixes
+
+* **show:** return issue comments in the TypeScript runtime ([73cea3c](https://github.com/cerebral-work/lnr/commit/73cea3ccc4dcb9f372cb21a44df4794d18be9ff9))
+* **show:** return issue comments in the TypeScript runtime ([d140cad](https://github.com/cerebral-work/lnr/commit/d140cade5658683e58db0fbd1c7c522de7102867))
+
 ## [0.31.1](https://github.com/cerebral-work/lnr/compare/v0.31.0...v0.31.1) (2026-10-27)
 
 
