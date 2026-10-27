@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.31.1](https://github.com/cerebral-work/lnr/compare/v0.31.0...v0.31.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **show:** return issue comments from lnr show ([899e953](https://github.com/cerebral-work/lnr/commit/899e953ad849f3cfdc0c657fe7e39ba930b8eb39))
+* **show:** return issue comments from lnr show ([0290716](https://github.com/cerebral-work/lnr/commit/029071652a5a376444e1e15a49531b63efda609f))
+
 ## [0.31.0](https://github.com/cerebral-work/lnr/compare/v0.30.0...v0.31.0) (2026-10-26)
 
 
