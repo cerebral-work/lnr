@@ -11,8 +11,9 @@ use std::process::ExitCode;
 
 use tracing_subscriber::EnvFilter;
 
-/// Version text: crate version plus the git revision stamped by `build.rs`.
-const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("LNR_BUILD_REV"), ")");
+/// Version text: the release version (`package.json`, stamped by `build.rs`
+/// as `LNR_VERSION`) plus the git revision.
+const VERSION: &str = concat!(env!("LNR_VERSION"), " (", env!("LNR_BUILD_REV"), ")");
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -39,6 +40,22 @@ mod tests {
         assert_eq!(code, 0);
         let help_code = cli::run_cli(&["--help".to_string()], VERSION);
         assert_eq!(help_code, 0);
+    }
+
+    #[test]
+    fn version_tracks_package_json() {
+        // release-please bumps package.json; the Rust binary must report that
+        // version, not the stale Cargo workspace version.
+        let package_json = include_str!("../../../package.json");
+        let expected = package_json
+            .split("\"version\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').nth(1))
+            .expect("package.json has a version");
+        assert!(
+            VERSION.starts_with(&format!("{expected} (")),
+            "VERSION {VERSION:?} does not start with package.json version {expected:?}"
+        );
     }
 
     #[test]
