@@ -19,6 +19,18 @@ function stubClient(overrides: Record<string, unknown> = {}): LinearClient {
     project: Promise.resolve({ name: "reverie-cloud platform prereqs" }),
     parent: Promise.resolve(undefined),
     labels: () => Promise.resolve({ nodes: [{ name: "store" }, { name: "M3" }] }),
+    comments: () =>
+      Promise.resolve({
+        nodes: [
+          {
+            id: "cm1",
+            body: "Verified live",
+            url: "https://linear.app/x/issue/CER-1406#comment-cm1",
+            createdAt: new Date("2026-07-02T08:00:00Z"),
+          },
+        ],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      }),
     ...overrides,
   };
   return { issue: () => Promise.resolve(issue) } as unknown as LinearClient;
@@ -43,7 +55,31 @@ describe("getIssue", () => {
       description: "## What\nRoute chunk vectors through EmbedderClient.",
       createdAt: "2026-06-20T10:00:00.000Z",
       updatedAt: "2026-07-01T09:00:00.000Z",
+      comments: {
+        nodes: [
+          {
+            id: "cm1",
+            body: "Verified live",
+            url: "https://linear.app/x/issue/CER-1406#comment-cm1",
+            createdAt: "2026-07-02T08:00:00.000Z",
+          },
+        ],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      },
     });
+  });
+
+  test("carries comments so a post-write read-back sees them", async () => {
+    const detail = await getIssue(stubClient(), "CER-1406");
+    expect(detail.comments?.nodes.map((c) => c.body)).toEqual(["Verified live"]);
+    const out = renderIssueDetail(detail);
+    expect(out).toContain("comments: 1");
+    expect(out).toContain("Verified live");
+    const empty = await getIssue(
+      stubClient({ comments: () => Promise.resolve({ nodes: [], pageInfo: { hasNextPage: false, endCursor: null } }) }),
+      "CER-1406",
+    );
+    expect(renderIssueDetail(empty)).not.toContain("comments:");
   });
 
   test("includes milestone identity and date for post-write verification", async () => {

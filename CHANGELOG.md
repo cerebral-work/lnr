@@ -20,6 +20,7 @@
 
 ### Added
 
+- `lnr show` in the TypeScript runtime (the binary releases ship) now returns the issue's comments (`comments.nodes`, first 50, with `pageInfo`), lists the count in the metadata and prints the bodies after the description. 0.31.1 added this to the Rust runtime only, so the shipped binary still had no `comments` key.
 - Read-only MCP mode, issue-scoped comment readback with pagination, and bounded Cortex repository observations in both runtimes.
 - `lnr show` returns the issue's comments (`comments.nodes`, first 50, with `pageInfo`) and names the count in the human summary; before this the JSON had no `comments` key, so a read-back after `lnr comment` looked like a failed write.
 

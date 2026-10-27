@@ -488,6 +488,11 @@ export interface IssueDetail {
   description: string | null;
   createdAt: string;
   updatedAt: string;
+  /** First page of comments (50); absent in `--cache` mode, which stores none. */
+  comments?: {
+    nodes: Array<{ id: string; body: string; url: string; createdAt: string }>;
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  };
 }
 
 /**
@@ -497,13 +502,14 @@ export interface IssueDetail {
  */
 export async function getIssue(client: LinearClient, id: string): Promise<IssueDetail> {
   const issue = await client.issue(id);
-  const [state, assignee, project, parent, labels, milestone] = await Promise.all([
+  const [state, assignee, project, parent, labels, milestone, comments] = await Promise.all([
     issue.state,
     issue.assignee,
     issue.project,
     issue.parent,
     issue.labels(),
     issue.projectMilestone,
+    issue.comments({ first: 50 }),
   ]);
   return {
     id: issue.id,
@@ -525,11 +531,21 @@ export async function getIssue(client: LinearClient, id: string): Promise<IssueD
     description: issue.description ?? null,
     createdAt: new Date(issue.createdAt).toISOString(),
     updatedAt: new Date(issue.updatedAt).toISOString(),
+    comments: {
+      nodes: comments.nodes.map((c) => ({
+        id: c.id,
+        body: c.body,
+        url: c.url,
+        createdAt: new Date(c.createdAt).toISOString(),
+      })),
+      pageInfo: { hasNextPage: comments.pageInfo.hasNextPage, endCursor: comments.pageInfo.endCursor ?? null },
+    },
   };
 }
 
-/** Render an {@link IssueDetail} for the terminal: header, metadata, body. */
+/** Render an {@link IssueDetail} for the terminal: header, metadata, body, comments. */
 export function renderIssueDetail(d: IssueDetail): string {
+  const commentCount = d.comments?.nodes.length ?? 0;
   const meta = [
     `  url: ${d.url}`,
     `  priority: ${d.priority}${d.assignee ? `   assignee: ${d.assignee}` : ""}`,
@@ -538,9 +554,13 @@ export function renderIssueDetail(d: IssueDetail): string {
     ...(d.labels.length ? [`  labels: ${d.labels.join(", ")}`] : []),
     ...(d.parent ? [`  parent: ${d.parent}`] : []),
     `  created: ${d.createdAt}   updated: ${d.updatedAt}`,
+    ...(commentCount ? [`  comments: ${commentCount}${d.comments?.pageInfo.hasNextPage ? " (more not shown)" : ""}`] : []),
   ].join("\n");
   const body = d.description?.trim() ? d.description : "(no description)";
-  return `${d.identifier} [${d.state}]: ${d.title}\n${meta}\n\n${body}\n`;
+  const comments = (d.comments?.nodes ?? [])
+    .map((c) => `--- ${c.createdAt} ${c.url}\n${c.body}`)
+    .join("\n\n");
+  return `${d.identifier} [${d.state}]: ${d.title}\n${meta}\n\n${body}\n${comments ? `\n${comments}\n` : ""}`;
 }
 
 /**
