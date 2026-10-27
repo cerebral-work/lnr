@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.3](https://github.com/cerebral-work/lnr/compare/v0.31.2...v0.31.3) (2026-10-27)
+
+
+### Bug Fixes
+
+* **version:** report the package.json release version from the Rust binary ([f61fceb](https://github.com/cerebral-work/lnr/commit/f61fceb8ba8c027b2e9fa523526d5db61aeffaca))
+
 ## [0.31.2](https://github.com/cerebral-work/lnr/compare/v0.31.1...v0.31.2) (2026-10-27)
 
 
