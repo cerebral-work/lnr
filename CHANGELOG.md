@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.31.4](https://github.com/cerebral-work/lnr/compare/v0.31.3...v0.31.4) (2026-10-28)
+
+
+### Documentation
+
+* stage sovereign-monorepo-handoff.md (LeanSpec 0017) ([eb210c7](https://github.com/cerebral-work/lnr/commit/eb210c732fbeb73e2a6ae7a162ee2ce3b6eb2788))
+* stage sovereign-monorepo-handoff.md (LeanSpec 0017) ([5101642](https://github.com/cerebral-work/lnr/commit/51016427107e6483770a0fc1ebdbd98b689ad157))
+
 ## [0.31.3](https://github.com/cerebral-work/lnr/compare/v0.31.2...v0.31.3) (2026-10-27)
 
 
