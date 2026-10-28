@@ -1,6 +1,6 @@
 {
   "name": "lnr",
-  "version": "0.31.3",
+  "version": "0.31.4",
   "private": true,
   "description": "lnr (linearctl) — a headless CLI for frequently ad-hocced Linear workflows (digest, file, triage, milestone), built on @linear/sdk.",
   "type": "module",
