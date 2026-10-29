@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.32.0](https://github.com/cerebral-work/lnr/compare/v0.31.4...v0.32.0) (2026-10-29)
+
+
+### Features
+
+* close evidence/guard/rollup, review command, show children ([634d198](https://github.com/cerebral-work/lnr/commit/634d1984cc0cd2b4d8ed80b89621862d8815e7ae))
+* **close:** receipt comment, parent guard and rollup ([58f667f](https://github.com/cerebral-work/lnr/commit/58f667f2a3c29ce09a8fe6e656298f7934babafb))
+* **review:** add review command with PR attach and parent rollup ([55978e5](https://github.com/cerebral-work/lnr/commit/55978e53ee22ab7abc6fcaff7ec6e8098b193a89))
+* **show:** list children and subtask summary in show --json ([d01afcd](https://github.com/cerebral-work/lnr/commit/d01afcdc3cbc696a2d2f71d91888f6154257606d))
+
 ## [0.31.4](https://github.com/cerebral-work/lnr/compare/v0.31.3...v0.31.4) (2026-10-28)
 
 
