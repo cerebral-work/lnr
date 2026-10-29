@@ -6,17 +6,18 @@ import { fetchRateLimit } from "../src/core/ratelimit.js";
 
 /**
  * Live-API contract tests (CER-1140). READ-ONLY — no mutations, ever.
- * Gated on LINEAR_API_KEY: absent (CI without the secret, contributors
+ * Gated on LNR_LIVE_CONTRACT_KEY (never LINEAR_API_KEY, which test/setup.ts
+ * deletes so no other test can build a client): absent (CI without the secret, contributors
  * without a key) → the whole suite skips. Present → verifies the GraphQL
  * contracts the raw queries depend on, so a Linear schema change surfaces
  * here instead of as a runtime surprise.
  */
-const KEY = process.env.LINEAR_API_KEY;
+const KEY = process.env.LNR_LIVE_CONTRACT_KEY;
 const live = test.skipIf(!KEY);
 
 const client = KEY ? new LinearClient({ apiKey: KEY }) : (null as unknown as LinearClient);
 
-describe("live API contract (skips without LINEAR_API_KEY)", () => {
+describe("live API contract (skips without LNR_LIVE_CONTRACT_KEY)", () => {
   live("viewer resolves (auth path)", async () => {
     const viewer = await client.viewer;
     expect(viewer.id).toMatch(/^[0-9a-f-]{36}$/);
