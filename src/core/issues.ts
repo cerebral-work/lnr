@@ -7,6 +7,7 @@ import { withRetry } from "../lib/retry.js";
 import { resolveMilestoneId } from "./milestones.js";
 import { resolveCycleId } from "./cycles.js";
 import { resolveProject } from "./projects.js";
+import { listChildren, summarizeChildren, type ChildIssue, type SubtaskSummary } from "./children.js";
 
 export interface CreateIssueParams {
   teamKey: string;
@@ -488,6 +489,9 @@ export interface IssueDetail {
   description: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Every child issue, read live and paginated; absent in `--cache` mode. */
+  children?: ChildIssue[];
+  subtaskSummary?: SubtaskSummary;
   /** First page of comments (50); absent in `--cache` mode, which stores none. */
   comments?: {
     nodes: Array<{ id: string; body: string; url: string; createdAt: string }>;
@@ -502,7 +506,7 @@ export interface IssueDetail {
  */
 export async function getIssue(client: LinearClient, id: string): Promise<IssueDetail> {
   const issue = await client.issue(id);
-  const [state, assignee, project, parent, labels, milestone, comments] = await Promise.all([
+  const [state, assignee, project, parent, labels, milestone, comments, children] = await Promise.all([
     issue.state,
     issue.assignee,
     issue.project,
@@ -510,6 +514,7 @@ export async function getIssue(client: LinearClient, id: string): Promise<IssueD
     issue.labels(),
     issue.projectMilestone,
     issue.comments({ first: 50 }),
+    listChildren(client, issue.id),
   ]);
   return {
     id: issue.id,
@@ -531,6 +536,8 @@ export async function getIssue(client: LinearClient, id: string): Promise<IssueD
     description: issue.description ?? null,
     createdAt: new Date(issue.createdAt).toISOString(),
     updatedAt: new Date(issue.updatedAt).toISOString(),
+    children,
+    subtaskSummary: summarizeChildren(children),
     comments: {
       nodes: comments.nodes.map((c) => ({
         id: c.id,
@@ -553,6 +560,8 @@ export function renderIssueDetail(d: IssueDetail): string {
     ...(d.milestone ? [`  milestone: ${d.milestone.name} (${d.milestone.id})${d.milestone.targetDate ? `   due: ${d.milestone.targetDate}` : ""}`] : []),
     ...(d.labels.length ? [`  labels: ${d.labels.join(", ")}`] : []),
     ...(d.parent ? [`  parent: ${d.parent}`] : []),
+    ...(d.children?.length ? [`  subtasks: ${d.subtaskSummary?.completed ?? 0}/${d.children.length} done${d.subtaskSummary?.open ? `, ${d.subtaskSummary.open} open` : ""}`,
+      ...d.children.map((c) => `    ${c.identifier} [${c.state}] ${c.title}`)] : []),
     `  created: ${d.createdAt}   updated: ${d.updatedAt}`,
     ...(commentCount ? [`  comments: ${commentCount}${d.comments?.pageInfo.hasNextPage ? " (more not shown)" : ""}`] : []),
   ].join("\n");
