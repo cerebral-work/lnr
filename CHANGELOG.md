@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.32.1](https://github.com/cerebral-work/lnr/compare/v0.32.0...v0.32.1) (2026-10-29)
+
+
+### Documentation
+
+* **agents:** add canonical handbook and agentic references ([fa2b1e4](https://github.com/cerebral-work/lnr/commit/fa2b1e4e3e965c9203a8d42a9461f4cc0408986d))
+* **agents:** add canonical handbook and agentic references ([eadb749](https://github.com/cerebral-work/lnr/commit/eadb749128542f99c0901f9ef8800c53c03e90a0))
+
 ## [0.32.0](https://github.com/cerebral-work/lnr/compare/v0.31.4...v0.32.0) (2026-10-29)
 
 
