@@ -13,7 +13,9 @@ import { fetchRateLimit } from "../src/core/ratelimit.js";
  * here instead of as a runtime surprise.
  */
 const KEY = process.env.LNR_LIVE_CONTRACT_KEY;
-const live = test.skipIf(!KEY);
+// Live network calls: bun's 5 s default timeout is too tight for the Linear API.
+const LIVE_TIMEOUT_MS = 30_000;
+const live = (name: string, fn: () => Promise<void>) => test.skipIf(!KEY)(name, fn, LIVE_TIMEOUT_MS);
 
 const client = KEY ? new LinearClient({ apiKey: KEY }) : (null as unknown as LinearClient);
 
