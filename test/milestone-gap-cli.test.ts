@@ -6,7 +6,9 @@ const root = join(import.meta.dir, "..");
 // fetch guard in test/setup.ts does not cover them. Their safety comes from the preload deleting
 // LINEAR_API_KEY and from the key being passed (as runLive) only under the opt-in.
 const KEY = process.env.LNR_LIVE_CONTRACT_KEY;
-const live = test.skipIf(!KEY);
+// Live network calls through a child CLI: bun's 5 s default timeout is too tight.
+const LIVE_TIMEOUT_MS = 30_000;
+const live = (name: string, fn: () => Promise<void>) => test.skipIf(!KEY)(name, fn, LIVE_TIMEOUT_MS);
 
 async function runCli(args: string[], envOverrides: Record<string, string> = {}) {
   const child = Bun.spawn([process.execPath, "src/index.ts", ...args], {
