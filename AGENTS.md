@@ -48,3 +48,9 @@ Run `make help` for the full list.
 | `make check` | Full quality gate: `typecheck`, `fmt-check`, `clippy`, `test`, `doc-test`, `deny`. |
 | `make smoke` | Run cache benchmarks, CLI contract tests, `lnr-cli` smoke test, and zero-I/O domain check. |
 | `make hygiene` | Full preflight gate (`check`, `smoke`, `spec-check`, `toolchain-check`, `cpm-check`). |
+
+## Canonical Estate References (`handbook` & `agentic`)
+
+All agents working in this repository must consult the two canonical estate reference repositories:
+- **`cerebral-work/handbook`** (`~/projects/mesh/comms/handbook/`): Organizational handbook (`START-HERE.md`, `where-things-live.md`, `how-to-get-merged.md`, `people.md`, `communicate-in-controlled-language.md`, and `sops/`).
+- **`unsigned-gg/agentic`** (`~/projects/agents/harness/agentic/`): Shared agent harness configurations, reusable skills (`packages/skills/`), lane personas (`packages/claude-agents/bin/lane-persona`), and estate context (`packages/context/estate.md`, `~/.agents/estate.md`).
