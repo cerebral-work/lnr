@@ -37,8 +37,10 @@ jobs:
           # they self-skip when the secret is absent (e.g. forks).
           LNR_LIVE_CONTRACT_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: |
-          # Capture the ONE full-suite run for the next step. GitHub's bash uses
-          # pipefail, so a test failure still fails this step through tee.
+          # Capture the ONE full-suite run for the next step. The default run shell
+          # is `bash -e` WITHOUT pipefail, so set it: otherwise tee's exit status
+          # hides a failing test and the step goes green.
+          set -o pipefail
           bun test 2>&1 | tee "${RUNNER_TEMP}/bun-test.log"
 
       - name: Verify live-contract tests ran (not skipped)
