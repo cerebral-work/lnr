@@ -1,7 +1,9 @@
 import { assertBatchSucceeded, notFoundError, usageError } from "../lib/errors.js";
 import { markDuplicate } from "../core/duplicate.js";
+import { closeWithEvidence, validateCloseOptions } from "../core/lifecycle.js";
+import type { LinearClient } from "@linear/sdk";
 import { makeClient } from "../client.js";
-import { updateIssue, closeIssue, addRelations, type AddedRelationsResult } from "../core/issues.js";
+import { updateIssue, addRelations, type AddedRelationsResult } from "../core/issues.js";
 import { parseBulkSpec, bulkUpdate } from "../core/bulk.js";
 import { readStdin, readStdinFor } from "../lib/io.js";
 import { printJson } from "../lib/output.js";
@@ -324,17 +326,51 @@ export interface CloseOptions {
   duplicateOf?: string;
   team?: string[];
   json?: boolean;
+  commit?: string;
+  pr?: string;
+  repo?: string;
+  comment?: string;
+  rollup?: boolean;
+  force?: boolean;
+}
+
+/** Non-blocking cache write-through for a freshly closed issue. */
+function patchClosedInCache(issue: { id?: string; identifier: string; title: string; url: string; state: string; assignee?: string | null }): void {
+  try {
+    const dbPath = getCacheDbPath();
+    if (!existsSync(dbPath)) return;
+    const cache = openCacheDb({ dbPath });
+    try {
+      patchIssueInCache(cache, {
+        id: issue.id ?? issue.identifier,
+        identifier: issue.identifier,
+        title: issue.title,
+        url: issue.url,
+        stateName: issue.state,
+        stateType: "completed",
+        assigneeName: issue.assignee ?? null,
+        completedAt: new Date().toISOString(),
+      });
+    } finally {
+      cache.close();
+    }
+  } catch {
+    // Non-blocking write-through
+  }
 }
 
 /**
  * `linearctl close <id>` — move an issue to its team's completed state.
- * Delegates to `core.closeIssue`. At a TTY with no id, offers a fuzzy picker
- * plus a confirm gate (closing is the CLI's most consequential one-keystroke
- * write). A fully-specified `close CER-123` stays confirm-free — headless and
- * muscle-memory behavior unchanged. See docs/spec.md §6.8.
+ * Refuses a parent with open children unless `--force`; `--commit/--pr/--comment`
+ * post a receipt comment BEFORE the flip; `--rollup` closes the parent when this
+ * was the last open sibling (core/lifecycle.ts). At a TTY with no id, offers a
+ * fuzzy picker plus a confirm gate (closing is the CLI's most consequential
+ * one-keystroke write). A fully-specified `close CER-123` stays confirm-free.
+ * See docs/spec.md §6.8.
  */
-export async function close(id: string | undefined, opts: CloseOptions): Promise<void> {
-  const client = makeClient();
+export async function close(id: string | undefined, opts: CloseOptions, injected?: LinearClient): Promise<void> {
+  validateCloseOptions(opts);
+  const client = injected ?? makeClient();
   if (!id && isInteractive(opts.json)) {
     id = await promptIssuePick(client, "Close which issue?", opts.team);
     if (!(await promptConfirm(`Close ${id}?`))) {
@@ -343,34 +379,28 @@ export async function close(id: string | undefined, opts: CloseOptions): Promise
     }
   }
   if (!id) throw usageError("close needs an <id> (e.g. CER-123).");
-  const issue = await withSpinner(`Closing ${id}…`, () => opts.duplicateOf !== undefined ? markDuplicate(client, id, opts.duplicateOf, true) : closeIssue(client, id));
 
-  try {
-    const dbPath = getCacheDbPath();
-    if (existsSync(dbPath)) {
-      const cache = openCacheDb({ dbPath });
-      try {
-        patchIssueInCache(cache, {
-          id: issue.id,
-          identifier: issue.identifier,
-          title: issue.title,
-          url: issue.url,
-          stateName: issue.state,
-          stateType: "completed",
-          assigneeName: issue.assignee,
-          completedAt: new Date().toISOString(),
-        });
-      } finally {
-        cache.close();
-      }
+  if (opts.duplicateOf !== undefined) {
+    const issue = await withSpinner(`Closing ${id}…`, () => markDuplicate(client, id, opts.duplicateOf!, true));
+    patchClosedInCache(issue);
+    if (opts.json) {
+      printJson(issue);
+      return;
     }
-  } catch {
-    // Non-blocking write-through
-  }
-
-  if (opts.json) {
-    printJson(issue);
+    renderIssue(issue);
     return;
   }
-  renderIssue(issue);
+
+  const result = await withSpinner(`Closing ${id}…`, () => closeWithEvidence(client, id, opts));
+  if (result.closed) patchClosedInCache({ id: result.id, identifier: result.identifier, title: result.title, url: result.url, state: result.state });
+  if (result.error || result.rollupError) process.exitCode = 1;
+  if (opts.json) {
+    printJson(result);
+    return;
+  }
+  process.stdout.write(`${result.identifier} [${result.state}]: ${result.title}\n  url: ${result.url}\n`);
+  if (result.commentPosted) process.stdout.write("  receipt comment posted\n");
+  if (result.rolledUpParent) process.stdout.write(`  rolled up: ${result.rolledUpParent.identifier} [${result.rolledUpParent.state}]\n`);
+  if (result.error) process.stderr.write(`error: ${result.error}\n`);
+  if (result.rollupError) process.stderr.write(`error: rollup failed (child close stands): ${result.rollupError}\n`);
 }
