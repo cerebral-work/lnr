@@ -33,7 +33,8 @@ function stubClient(overrides: Record<string, unknown> = {}): LinearClient {
       }),
     ...overrides,
   };
-  return { issue: () => Promise.resolve(issue) } as unknown as LinearClient;
+  const rawRequest = async () => ({ data: { issue: { children: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } } });
+  return { issue: () => Promise.resolve(issue), client: { rawRequest } } as unknown as LinearClient;
 }
 
 describe("getIssue", () => {
@@ -55,6 +56,8 @@ describe("getIssue", () => {
       description: "## What\nRoute chunk vectors through EmbedderClient.",
       createdAt: "2026-06-20T10:00:00.000Z",
       updatedAt: "2026-07-01T09:00:00.000Z",
+      children: [],
+      subtaskSummary: { total: 0, completed: 0, canceled: 0, duplicate: 0, open: 0, allCompleted: true },
       comments: {
         nodes: [
           {
@@ -138,5 +141,34 @@ describe("renderIssueDetail", () => {
   test("says so when there is no description", () => {
     const out = renderIssueDetail({ ...detail, description: null });
     expect(out).toContain("(no description)");
+  });
+});
+
+describe("getIssue children", () => {
+  function withChildren(pages: Array<Array<[string, string, string]>>): LinearClient {
+    const base = stubClient() as any;
+    base.client = {
+      rawRequest: async (_q: string, vars: { after?: string }) => {
+        const i = vars.after ? Number(vars.after) : 0;
+        return { data: { issue: { children: {
+          nodes: pages[i].map(([identifier, state, type]) => ({ identifier, title: `t-${identifier}`, state: { name: state, type } })),
+          pageInfo: { hasNextPage: i + 1 < pages.length, endCursor: i + 1 < pages.length ? String(i + 1) : null },
+        } } } };
+      },
+    };
+    return base as LinearClient;
+  }
+  test("lists every page of children with a subtask summary", async () => {
+    const detail = await getIssue(withChildren([
+      [["CER-2", "Done", "completed"], ["CER-3", "Canceled", "canceled"]],
+      [["CER-4", "Triage", "triage"], ["CER-5", "Duplicate", "duplicate"]],
+    ]), "CER-1406");
+    expect(detail.children?.map((c) => c.identifier)).toEqual(["CER-2", "CER-3", "CER-4", "CER-5"]);
+    expect(detail.children?.[2]).toEqual({ identifier: "CER-4", title: "t-CER-4", state: "Triage", stateType: "triage" });
+    expect(detail.subtaskSummary).toEqual({ total: 4, completed: 1, canceled: 1, duplicate: 1, open: 1, allCompleted: false });
+  });
+  test("no children: allCompleted is true (open === 0)", async () => {
+    const detail = await getIssue(withChildren([[]]), "CER-1406");
+    expect(detail.subtaskSummary).toEqual({ total: 0, completed: 0, canceled: 0, duplicate: 0, open: 0, allCompleted: true });
   });
 });

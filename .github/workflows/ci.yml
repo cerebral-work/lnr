@@ -35,7 +35,7 @@ jobs:
         env:
           # Enables the read-only live-API contract tests (test/live-contract.test.ts);
           # they self-skip when the secret is absent (e.g. forks).
-          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          LNR_LIVE_CONTRACT_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: |
           # Capture the ONE full-suite run for the next step. GitHub's bash uses
           # pipefail, so a test failure still fails this step through tee.
@@ -44,10 +44,10 @@ jobs:
       - name: Verify live-contract tests ran (not skipped)
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
-          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          LNR_LIVE_CONTRACT_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: |
-          if [ -z "${LINEAR_API_KEY:-}" ]; then
-            echo "::warning::LINEAR_API_KEY secret is not set — live-contract tests are silently skipping on every CI run."
+          if [ -z "${LNR_LIVE_CONTRACT_KEY:-}" ]; then
+            echo "::warning::LINEAR_API_KEY secret is not set (exposed to tests as LNR_LIVE_CONTRACT_KEY) — live-contract tests are silently skipping on every CI run."
             echo "::warning::The read-only contract tests verify the GraphQL schema hasn't drifted. Without them, schema changes surface as runtime surprises."
             echo "::warning::To fix: add the LINEAR_API_KEY secret to the repo (Settings → Secrets → Actions)."
             exit 1

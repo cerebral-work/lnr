@@ -12,6 +12,9 @@ fi
 : "${LINEAR_API_KEY:?Set LINEAR_API_KEY in the environment}"
 linearctl ratelimit --json
 linearctl close "$ISSUE" --json
+# With evidence (receipt comment lands before the flip) and parent rollup:
+# linearctl close "$ISSUE" --commit "${SHA:?}" --pr "${PR:?}" --repo "${REPO:?}" --rollup --json
+# A parent with open children is refused unless --force is passed.
 linearctl show "$ISSUE" --json
 
 # To close as a duplicate instead of completed, use this alternative command:

@@ -16,6 +16,7 @@ import { comment } from "./commands/comment.js";
 import { stale } from "./commands/stale.js";
 import { xref } from "./commands/xref.js";
 import { show } from "./commands/show.js";
+import { review } from "./commands/review.js";
 import { searchCmd } from "./commands/search.js";
 import { dupcheckCmd } from "./commands/dupcheck.js";
 import { park } from "./commands/park.js";
@@ -254,8 +255,24 @@ program
   .argument("[id]", "issue id or identifier (e.g. CER-123); fuzzy picker at a TTY when omitted")
   .option("--team <key...>", "scope the interactive picker to team key(s)")
   .option("--duplicate-of <canonical>", "create the duplicate relation, then close in the team's duplicate-type state")
+  .option("--commit <sha>", "shipping commit; recorded in the receipt comment")
+  .option("--pr <number-or-url>", "shipping PR; a bare number needs --repo or a GitHub origin remote")
+  .option("--repo <owner/repo>", "GitHub repo for --pr numbers and the commit link")
+  .option("--comment <text>", "extra text for the receipt comment")
+  .option("--rollup", "when this was the last open sibling, comment on and close the parent")
+  .option("--force", "close a parent even though children are still open")
   .option("--json", "emit JSON")
   .action((id, opts) => close(id, opts));
+
+program
+  .command("review")
+  .description("Move an issue to In Review (In Progress if the team has none) and attach its PR.")
+  .argument("<id>", "issue id or identifier (e.g. CER-123)")
+  .option("--pr <number-or-url>", "PR to attach; a bare number needs --repo or a GitHub origin remote")
+  .option("--repo <owner/repo>", "GitHub repo for a --pr number")
+  .option("--rollup", "move the parent to In Review when every sibling is In Review or closed")
+  .option("--json", "emit JSON")
+  .action((id, opts) => review(id, opts));
 
 program
   .command("relate")
