@@ -43,6 +43,7 @@ import example41 from "../../examples/relate.sh" with { type: "text" };
 import example42 from "../../examples/beads.sh" with { type: "text" };
 import example43 from "../../examples/plan.sh" with { type: "text" };
 import example44 from "../../examples/intake.sh" with { type: "text" };
+import example45 from "../../examples/review.sh" with { type: "text" };
 
 /** Text imports are embedded by bun build --compile; no runtime filesystem dependency. */
 export const EXAMPLES: Record<string, string> = {
@@ -91,6 +92,7 @@ export const EXAMPLES: Record<string, string> = {
   "beads": example42,
   "plan": example43,
   "intake": example44,
+  "review": example45,
 };
 
 export function exampleHint(command: string): string {
