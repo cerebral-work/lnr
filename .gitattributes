@@ -7,3 +7,7 @@
 
 # generated — collapse in diffs/reviews
 bun.lock linguist-generated=true -diff
+
+# Append-only catalog and index tables merge cleanly across parallel PRs (REQ-0018-09, REQ-0018-10).
+specs/README.md merge=union
+docs/reference/leanspec-index.md merge=union
