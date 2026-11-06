@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.33.0](https://github.com/cerebral-work/lnr/compare/v0.32.1...v0.33.0) (2026-11-06)
+
+
+### Features
+
+* **lnr-domain:** add SalesCanonReport and 7-Principle Sales Canon to org_psych ([af2b813](https://github.com/cerebral-work/lnr/commit/af2b813212ae5bfc7703109e607862854b5de0c6))
+* **lnr-domain:** add WesBrownLeadershipReport and WesBrownPrincipleVerdict to org_psych ([98a10b8](https://github.com/cerebral-work/lnr/commit/98a10b8d7e1bdd4444fbbc0822c77d515af8e57b))
+
 ## [0.32.1](https://github.com/cerebral-work/lnr/compare/v0.32.0...v0.32.1) (2026-10-29)
 
 
