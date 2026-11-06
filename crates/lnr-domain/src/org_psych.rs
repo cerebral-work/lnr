@@ -357,6 +357,107 @@ impl RdPortfolioReport {
     }
 }
 
+/// Wes Brown Engineering Leadership Canon: Top 3 Engineering Principles verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WesBrownPrincipleVerdict {
+    /// Solves the highest-impact root problem at bounded cost and ships the 80% "good enough" point.
+    ShipEightyTwenty,
+    /// Over-engineered >92% completeness target with high complexity/maintenance burden ("perfection is the enemy of good").
+    PerfectionismTrap,
+    /// Patches a surface symptom rather than the highest-impact root problem.
+    SymptomWorkaround,
+    /// Time, complexity, or maintenance burden exceeds the problem's impact.
+    ExcessiveMaintenanceBurden,
+}
+
+impl WesBrownPrincipleVerdict {
+    /// Compact label for `80x24` terminal tables.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ShipEightyTwenty => "Ship80/20(Grn)",
+            Self::PerfectionismTrap => "PerfTrap(>92%)",
+            Self::SymptomWorkaround => "SymptomOnly",
+            Self::ExcessiveMaintenanceBurden => "HighMaintTax",
+        }
+    }
+}
+
+/// Subject 6 diagnostic: Wes Brown's Engineering Leadership Canon (`xc-iopsych-corpus`:
+/// `iopsych-wes-brown-leadership-canon`) — Top 3 Engineering Principles, Neurodivergent
+/// Executive Scaffolding, Interoceptive State Debugging ("debug the state, not the argument"),
+/// Public-by-Default Transactive Memory (`#ml-dev`), Self-Driven Deadlines, and the 5-6 Engineer Ceiling.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WesBrownLeadershipReport {
+    /// Active direct reports or concurrent subagent lanes (hard ceiling: `<= 6`).
+    pub active_lanes: usize,
+    /// Whether the team respects the 5-6 engineer/lane hard span-of-control ceiling.
+    pub within_span_ceiling: bool,
+    /// Principle 1: Root-problem impact score $\in [0, 1]$.
+    pub root_problem_impact: f64,
+    /// Principle 2: Time, complexity, and maintenance cost burden $\in [0, 1]$.
+    pub cost_burden_ratio: f64,
+    /// Principle 3: Target completeness $\in [0, 1]$ (80/20 sweet spot is $[0.75, 0.92]$).
+    pub target_completeness: f64,
+    /// Verdict from Wes Brown's Top 3 Engineering Principles.
+    pub principle_verdict: WesBrownPrincipleVerdict,
+    /// Continuous hyperfocus/debugging minutes without a break or `/checkpoint`.
+    pub continuous_minutes: u32,
+    /// Whether an immediate interoceptive/context state-reset timeout is required ($\ge 240\text{m}$ or $\rho_{\text{eff}} \ge 0.85$).
+    pub interoceptive_timeout_required: bool,
+    /// Fraction of work discussions in public searchable channels (`#ml-dev` / `XERJ`) vs. 1:1 DMs.
+    pub public_channel_ratio: f64,
+    /// Whether synchronous exploratory sessions obey the "Never Recorded" rule and status is artifact-derived ("Fuck Jira").
+    pub never_recorded_and_artifact_status: bool,
+}
+
+impl WesBrownLeadershipReport {
+    /// Evaluate Wes Brown's Engineering Leadership Canon practices and Top 3 Principles.
+    #[must_use]
+    pub fn evaluate(
+        active_lanes: usize,
+        root_problem_impact: f64,
+        cost_burden_ratio: f64,
+        target_completeness: f64,
+        continuous_minutes: u32,
+        rho_eff: f64,
+        public_channel_ratio: f64,
+        never_recorded_and_artifact_status: bool,
+    ) -> Self {
+        let impact = root_problem_impact.clamp(0.0, 1.0);
+        let cost = cost_burden_ratio.clamp(0.0, 1.0);
+        let completeness = target_completeness.clamp(0.0, 1.0);
+        let pub_ratio = public_channel_ratio.clamp(0.0, 1.0);
+        let leverage = impact / cost.max(0.05);
+
+        let principle_verdict = if impact < 0.50 {
+            WesBrownPrincipleVerdict::SymptomWorkaround
+        } else if completeness > 0.92 && cost > 0.45 {
+            WesBrownPrincipleVerdict::PerfectionismTrap
+        } else if cost > 0.65 || leverage < 1.15 {
+            WesBrownPrincipleVerdict::ExcessiveMaintenanceBurden
+        } else {
+            WesBrownPrincipleVerdict::ShipEightyTwenty
+        };
+
+        let interoceptive_timeout_required = continuous_minutes >= 240 || rho_eff >= 0.85;
+
+        Self {
+            active_lanes,
+            within_span_ceiling: active_lanes <= 6,
+            root_problem_impact: impact,
+            cost_burden_ratio: cost,
+            target_completeness: completeness,
+            principle_verdict,
+            continuous_minutes,
+            interoceptive_timeout_required,
+            public_channel_ratio: pub_ratio,
+            never_recorded_and_artifact_status,
+        }
+    }
+}
+
 /// Complete 5-Subject Organizational Science & Applied I/O Psychology Suite Report.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FiveSubjectSuiteReport {
@@ -471,5 +572,26 @@ mod tests {
         assert_eq!(compiler.optimal_parallel_k, 1);
         assert_eq!(compiler.strategy, ExperimentStrategy::SequentialRatchet);
         assert!(research.march_exploration_share > compiler.march_exploration_share);
+    }
+
+    #[test]
+    fn subject6_wes_brown_leadership_evaluates_top_three_principles_interoception_and_span_ceiling()
+    {
+        let healthy = WesBrownLeadershipReport::evaluate(5, 0.90, 0.25, 0.80, 90, 0.55, 0.98, true);
+        assert!(healthy.within_span_ceiling);
+        assert_eq!(
+            healthy.principle_verdict,
+            WesBrownPrincipleVerdict::ShipEightyTwenty
+        );
+        assert!(!healthy.interoceptive_timeout_required);
+
+        let perfectionist_overloaded =
+            WesBrownLeadershipReport::evaluate(8, 0.85, 0.60, 0.98, 360, 0.92, 0.50, false);
+        assert!(!perfectionist_overloaded.within_span_ceiling);
+        assert_eq!(
+            perfectionist_overloaded.principle_verdict,
+            WesBrownPrincipleVerdict::PerfectionismTrap
+        );
+        assert!(perfectionist_overloaded.interoceptive_timeout_required);
     }
 }
