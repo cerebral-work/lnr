@@ -96,10 +96,12 @@ jobs:
           toolchain: 1.94.1
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: unsigned-gg/actions/rust-kache@037d4f60e554ad1ba57e5fb35a5a2e1aa79fb5a9
         with:
-          shared-key: rust
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          mode: ${{ github.ref == 'refs/heads/main' && 'read-write' || 'read-only' }}
+          manifest-key: ci-rust
 
       - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
@@ -156,11 +158,11 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
           rustc --version
           cargo --version
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: unsigned-gg/actions/rust-kache@037d4f60e554ad1ba57e5fb35a5a2e1aa79fb5a9
         with:
-          shared-key: xtask-ci
-          # Only main writes the cache (including the installed tools); PRs restore it.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-on-failure: true
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          mode: ${{ github.ref == 'refs/heads/main' && 'read-write' || 'read-only' }}
+          manifest-key: ci-xtask
       - name: cargo xtask ci
         run: cargo xtask ci
