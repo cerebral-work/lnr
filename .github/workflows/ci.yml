@@ -96,11 +96,19 @@ jobs:
           toolchain: 1.94.1
           components: rustfmt, clippy
 
-      - uses: unsigned-gg/actions/rust-kache@037d4f60e554ad1ba57e5fb35a5a2e1aa79fb5a9
+      - uses: kunobi-ninja/kache-action@1a33fb2ff51be23eb9e87abeae6edb65be78f71c # v1
         with:
-          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          mode: ${{ github.ref == 'refs/heads/main' && 'read-write' || 'read-only' }}
+          version: v2.0.0
+          s3-bucket: ${{ secrets.R2_ACCESS_KEY_ID != '' && 'estate-ci-sccache' || '' }}
+          s3-endpoint: https://07ae57cca8fc1a438f9c9b875d1e2283.r2.cloudflarestorage.com
+          s3-region: auto
+          s3-prefix: kache/${{ github.repository }}
+          s3-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          s3-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          save-cache: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          cache-executables: "true"
+          cache-c-cpp: "true"
+          pr-comment: "false"
           manifest-key: ci-rust
 
       - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
@@ -158,11 +166,19 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
           rustc --version
           cargo --version
-      - uses: unsigned-gg/actions/rust-kache@037d4f60e554ad1ba57e5fb35a5a2e1aa79fb5a9
+      - uses: kunobi-ninja/kache-action@1a33fb2ff51be23eb9e87abeae6edb65be78f71c # v1
         with:
-          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          mode: ${{ github.ref == 'refs/heads/main' && 'read-write' || 'read-only' }}
+          version: v2.0.0
+          s3-bucket: ${{ secrets.R2_ACCESS_KEY_ID != '' && 'estate-ci-sccache' || '' }}
+          s3-endpoint: https://07ae57cca8fc1a438f9c9b875d1e2283.r2.cloudflarestorage.com
+          s3-region: auto
+          s3-prefix: kache/${{ github.repository }}
+          s3-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          s3-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          save-cache: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          cache-executables: "true"
+          cache-c-cpp: "true"
+          pr-comment: "false"
           manifest-key: ci-xtask
       - name: cargo xtask ci
         run: cargo xtask ci
