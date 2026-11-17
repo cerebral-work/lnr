@@ -1,0 +1,29 @@
+# dagrun v2 validation graph for cerebral-work/lnr
+schema: 2
+
+resources:
+  cpu_slots: 2
+
+steps:
+  fmt:
+    run: cargo fmt --all -- --check
+    cpu: 1
+
+  clippy:
+    run: cargo clippy --workspace --all-targets --locked -j 2 -- -D warnings
+    needs: [fmt]
+    cpu: 2
+
+  rust-test:
+    run: cargo test --workspace --locked -j 2
+    needs: [clippy]
+    cpu: 2
+
+  xtask-checks:
+    run: cargo run -q -p xtask --locked -j 2 -- spec-check && cargo run -q -p xtask --locked -j 2 -- projectfile-check
+    needs: [fmt]
+    cpu: 1
+
+  bun-test:
+    run: bun test
+    cpu: 1

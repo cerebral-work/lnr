@@ -1,5 +1,8 @@
+[build]
+jobs = 2
+
 [alias]
-xtask = "run -q -p xtask --"
+xtask = "run -q -p xtask -j 2 --"
 
 [registries.crates-io]
 protocol = "sparse"

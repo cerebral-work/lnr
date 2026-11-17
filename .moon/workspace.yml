@@ -1,9 +1,0 @@
-$schema: 'https://moonrepo.dev/schemas/workspace.json'
-
-projects:
-  - 'crates/*'
-  - 'xtask'
-
-vcs:
-  client: 'git'
-  defaultBranch: 'main'
