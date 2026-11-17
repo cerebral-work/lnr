@@ -1,0 +1,9 @@
+schema = 1
+name = "ci-verify"
+topology = "ci-verify"
+team = "lnr-maintainers"
+
+[[steps]]
+id = "verify"
+role = "critic"
+command = "make ci"

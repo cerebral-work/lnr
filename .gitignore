@@ -8,11 +8,10 @@ dist/
 *.tar.gz
 *.sha256
 
-# Rust / moon build artifacts
+# Rust build artifacts
 /target
 *.cdx.json
 junit.xml
-.moon/cache
 .tools/
 
 # never let a rendered secret ride along
@@ -25,7 +24,11 @@ secrets.env
 .DS_Store
 .blackwall/
 .dagr/
-.saga/
+.dagrun/
+.saga/*
+!.saga/*.toml
+!.saga/flows/
+!.saga/flows/*.toml
 .beads/
 
 # Lane persona (lane-persona, ephemeral)
