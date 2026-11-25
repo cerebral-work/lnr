@@ -1,7 +1,0 @@
-# SPEC-0023 merge train configuration.
-enabled = true
-max_batch = 4
-auto_queue = []
-land_release_please = false
-main_guard = "active"
-ast_commute = true
