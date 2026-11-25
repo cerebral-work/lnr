@@ -7,7 +7,14 @@ import { chmodSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { homedir } from "node:os";
 
-export const DEFAULT_OPERATOR_SOCKET = `${homedir()}/.local/state/linearctl/operator.sock`;
+/**
+ * The socket sits in `run/`, a directory the server creates, so the server owns
+ * it and can restrict it to 0700. `~/.local/state/linearctl` itself may be a
+ * mount point the process does not own: the linearctl-operator pod mounts a
+ * root-owned emptyDir there and runs as uid 65532, so a chmod of that directory
+ * fails with EPERM.
+ */
+export const DEFAULT_OPERATOR_SOCKET = `${homedir()}/.local/state/linearctl/run/operator.sock`;
 export const DEFAULT_CONNECT_TIMEOUT_MS = 250;
 export const MAX_CONTROL_HEADER_BYTES = 8192;
 export const MAX_CONTROL_BODY_BYTES = 1_048_576;

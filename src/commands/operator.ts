@@ -11,7 +11,7 @@ import { usageError } from "../lib/errors.js";
  *
  *   `linearctl operator [--socket <path>] [--queue-poll-interval <ms>] [--role <name...>] [--json] [--check] [--health]`
  *
- * `--socket` overrides the default `~/.local/state/linearctl/operator.sock`.
+ * `--socket` overrides the default `~/.local/state/linearctl/run/operator.sock`.
  * `--role` repeats to boot roles from `src/core/role-catalog.ts` (e.g.
  * `--role intake-triage --role grooming`). Roles share the cached app-actor
  * token so actions attribute as the bot, not a user (D2).
@@ -47,7 +47,7 @@ import { runIntakeTriage } from "../roles/intake-triage.js";
 import { runGrooming } from "../roles/grooming.js";
 
 export interface OperatorCommandOptions {
-  /** Override the Unix socket path (default: ~/.local/state/linearctl/operator.sock). */
+  /** Override the Unix socket path (default: ~/.local/state/linearctl/run/operator.sock). */
   socket?: string;
   /** Override the queue poll interval in ms. */
   queuePollInterval?: number;

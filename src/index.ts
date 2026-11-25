@@ -910,7 +910,7 @@ authCmd
 program
   .command("operator")
   .description("Long-running daemon: polls the CF Queue + serves watch delegation over a Unix socket. --check probes /readyz, --health probes /healthz (CER-1149).")
-  .option("--socket <path>", "Unix socket path (default: ~/.local/state/linearctl/operator.sock)")
+  .option("--socket <path>", "Unix socket path (default: ~/.local/state/linearctl/run/operator.sock)")
   .option("--queue-poll-interval <ms>", "queue poll interval in ms")
   .option("--timeout <ms>", "probe connect timeout in ms (default: 1000, env: LINEARCTL_OPERATOR_TIMEOUT)")
   .option("--namespace <ns>", "Kubernetes namespace to watch/reconcile", "linear-system")
@@ -928,7 +928,7 @@ program
   .option("--once", "run exactly one loop iteration (the long-running tail is CER-1149 follow-up)")
   .option("--payload <file|->", "AgentSessionEvent payload JSON file; '-' reads stdin")
   .option("--no-delegate", "skip the operator-delegate attempt (force the full-loop fallback)")
-  .option("--socket <path>", "operator Unix socket path (default: ~/.local/state/linearctl/operator.sock)")
+  .option("--socket <path>", "operator Unix socket path (default: ~/.local/state/linearctl/run/operator.sock)")
   .option("--json", "emit the emitted activity node ids as JSON")
    .action((opts) => watch(opts));
 
