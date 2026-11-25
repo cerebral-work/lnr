@@ -20,9 +20,22 @@
 import type { RoleDescriptor, RoleRunner, RoleRunResult } from "./role-catalog.js";
 import { checkHold } from "./containment.js";
 import { fetchRateLimit, isExhausted } from "./ratelimit.js";
+import { isAuthError } from "../lib/errors.js";
 
 /** Supplies the current app-actor token to a role run (the daemon's cache). */
 export type TokenProvider = () => string;
+
+/**
+ * The daemon's token cache, as seen by a role run (CER-3309). The app token
+ * expires after 30 days and has no refresh token, so a run that Linear rejects
+ * re-mints and retries once.
+ */
+export interface TokenAuth {
+  /** Linear rejected `token`. Records it, and re-mints when `token` is still the current one. */
+  rejected(token: string): Promise<void>;
+  /** A run completed with the current token. */
+  succeeded(): void;
+}
 
 /** A preflight verdict: run, or skip this tick with a logged reason. */
 export type PreflightResult = { skip: false } | { skip: true; reason: string };
@@ -106,6 +119,11 @@ export function scheduleRole(
    * gating; a bare call is ungated by design (see {@link noPreflight}).
    */
   preflight?: Preflight,
+  /**
+   * Token recovery. When set, a run that Linear rejects re-mints through it
+   * and retries once. Default: none (the error is logged, as for any failure).
+   */
+  auth?: TokenAuth,
 ): RoleSchedulerHandle {
   const gate = preflight ?? noPreflight;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -138,7 +156,25 @@ export function scheduleRole(
     inFlight = true;
     ran = true;
     try {
-      const result: RoleRunResult = await runner(token());
+      const used = token();
+      let result: RoleRunResult;
+      try {
+        result = await runner(used);
+      } catch (err) {
+        if (!auth || !isAuthError(err)) throw err;
+        console.error(`role[${role.name}]: Linear rejected the token; re-minting and retrying once`);
+        await auth.rejected(used);
+        // Shutdown may have started during the mint: never begin a fresh run then.
+        if (stopped) return;
+        const retryToken = token();
+        try {
+          result = await runner(retryToken);
+        } catch (retryErr) {
+          if (isAuthError(retryErr)) await auth.rejected(retryToken);
+          throw retryErr;
+        }
+      }
+      auth?.succeeded();
       // The runner is responsible for gating its own mutations via
       // assertRoleMayAct; the scheduler only observes + logs the summary.
       if (result.summary) {

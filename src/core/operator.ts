@@ -37,8 +37,10 @@ import {
   scheduleRole,
   type Preflight,
   type RoleSchedulerHandle,
+  type TokenAuth,
   type TokenProvider,
 } from "./scheduler.js";
+import { isAuthError } from "../lib/errors.js";
 import { cadenceToMs, type RoleDescriptor, type RoleRunResult } from "./role-catalog.js";
 import {
   startControlServer,
@@ -137,15 +139,61 @@ export interface OperatorOptions {
   hmac?: { key?: string; prevKey?: string; mode?: string } | null;
 }
 
-/** An in-memory token cache. The token value never leaves here except to Linear. */
-interface TokenCache {
-  getToken(): string;
-  refreshToken(): Promise<void>;
+/**
+ * While Linear keeps rejecting fresh tokens, re-mint at most this often. The
+ * first rejection after a success always re-mints (the 30-day expiry case).
+ */
+export const MIN_REMINT_INTERVAL_MS = 5 * 60_000;
+
+/** What /readyz may show about the token. Never the token value. */
+interface TokenStatus {
+  tokenAgeSec: number;
+  tokenMints: number;
+  auth: "ok" | "failing";
 }
 
-/** Build a token cache from a minter. The cached value is never logged. */
+/** An in-memory token cache. The token value never leaves here except to Linear. */
+interface TokenCache extends TokenAuth {
+  getToken(): string;
+  /** Mint a new token. Concurrent callers share one mint. */
+  refreshToken(): Promise<void>;
+  status(): TokenStatus;
+}
+
+/**
+ * Build a token cache from a minter (CER-3309). The cached value is never
+ * logged. Linear allows parallel client_credentials tokens only with identical
+ * scopes, and the minter always asks for the same scopes, so a re-mint never
+ * revokes the token another run holds.
+ */
 function makeTokenCache(minter: TokenMinter): TokenCache {
   let cached: string | null = null;
+  // Monotonic, so wall-clock corrections cannot make the age negative.
+  let mintedAtMonotonicMs = performance.now();
+  let mints = 0;
+  let mintFailed = false;
+  // Rejections of the current token since the last successful run.
+  let rejections = 0;
+  let minting: Promise<void> | null = null;
+
+  const refreshToken = (): Promise<void> => {
+    minting ??= (async () => {
+      try {
+        // The minter returns an opaque string; we hold it in memory only.
+        cached = await minter();
+        mints += 1;
+        mintedAtMonotonicMs = performance.now();
+        mintFailed = false;
+      } catch (err) {
+        mintFailed = true;
+        throw err;
+      } finally {
+        minting = null;
+      }
+    })();
+    return minting;
+  };
+
   return {
     getToken() {
       if (cached === null) {
@@ -153,9 +201,25 @@ function makeTokenCache(minter: TokenMinter): TokenCache {
       }
       return cached;
     },
-    async refreshToken() {
-      // The minter returns an opaque string; we hold it in memory only.
-      cached = await minter();
+    refreshToken,
+    async rejected(token) {
+      // A rejection of a token that was already replaced says nothing about the current one.
+      if (token !== cached) return;
+      rejections += 1;
+      if (rejections > 1 && performance.now() - mintedAtMonotonicMs < MIN_REMINT_INTERVAL_MS) return;
+      await refreshToken();
+    },
+    succeeded() {
+      rejections = 0;
+    },
+    status() {
+      return {
+        tokenAgeSec: Math.max(0, Math.floor((performance.now() - mintedAtMonotonicMs) / 1000)),
+        tokenMints: mints,
+        // One rejection is the normal expiry and the re-mint answers it; a second
+        // with no success in between means the fresh token is rejected too.
+        auth: mintFailed || rejections > 1 ? "failing" : "ok",
+      };
     },
   };
 }
@@ -251,11 +315,10 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
   const tokenCache = makeTokenCache(minter);
   await tokenCache.refreshToken();
 
-  // Readiness signals surfaced by /readyz (Track 4): token age, last poll,
-  // CF env presence. Durations use the monotonic clock so NTP/VM wall-clock
-  // corrections cannot produce a negative token age or stale/future polls.
-  // The wall timestamp remains solely for the human-readable lastPoll field.
-  const tokenMintedAtMonotonicMs = performance.now();
+  // Readiness signals surfaced by /readyz (Track 4): token status (from the
+  // cache), last poll, CF env presence. Durations use the monotonic clock so
+  // NTP/VM wall-clock corrections cannot produce stale/future polls. The wall
+  // timestamp remains solely for the human-readable lastPoll field.
   let lastPollAt: number | null = null;
   let lastPollAtMonotonicMs: number | null = null;
 
@@ -284,10 +347,14 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
     // time (null until the first poll lands), and last-known queue depth.
     if (req.method === "GET" && req.path === "/readyz") {
       const nowMonotonicMs = performance.now();
-      const ready =
+      const polling =
         !!queueEnv && lastPollAtMonotonicMs !== null
           ? lastPollAtMonotonicMs > nowMonotonicMs - 3 * pollIntervalMs
           : false;
+      const token = tokenCache.status();
+      // Not ready while Linear rejects the operator's token (CER-3309): a pod
+      // whose every run fails auth must not look healthy.
+      const ready = polling && token.auth === "ok";
       const body = JSON.stringify({
         ok: ready,
         cfEnv: {
@@ -295,7 +362,9 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
           queueId: !!queueEnv?.CF_QUEUE_ID,
           apiToken: !!queueEnv?.CF_API_TOKEN,
         },
-        tokenAgeSec: Math.max(0, Math.floor((nowMonotonicMs - tokenMintedAtMonotonicMs) / 1000)),
+        tokenAgeSec: token.tokenAgeSec,
+        tokenMints: token.tokenMints,
+        auth: token.auth,
         lastPoll: lastPollAt === null ? null : new Date(lastPollAt).toISOString(),
         queueDepth: lastQueueDepth,
         // Surfaced so `operator --check` distinguishes a deliberate hold
@@ -458,6 +527,8 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
 
     for (const msg of messages) {
       inFlight += 1;
+      // The token this event used, so a rejection re-mints only if it is still current.
+      let usedToken: string | undefined;
       try {
         // HMAC envelope verification (forgery defense): with a key
         // configured, every message must be a valid signed envelope —
@@ -491,8 +562,9 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
           continue;
         }
 
-        const token = tokenCache.getToken();
-        const result = await eventLoop(event, token);
+        usedToken = tokenCache.getToken();
+        const result = await eventLoop(event, usedToken);
+        tokenCache.succeeded();
         // stderr only — stdout is reserved for JSON output.
         console.error(
           `operator: handled event session=${event.agentSession?.id ?? "?"} ` +
@@ -503,10 +575,10 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
         // Log + ACK anyway — don't poison the queue with infinite retry.
         const msg2 = err instanceof Error ? err.message : String(err);
         console.error(`operator: event loop error: ${msg2}; acking to avoid retry`);
-        // On 401 from a Linear call, re-mint for the next iteration.
-        if (/\b401\b/.test(msg2)) {
+        // Linear rejected the token: re-mint for the next event (CER-3309).
+        if (usedToken !== undefined && isAuthError(err)) {
           try {
-            await tokenCache.refreshToken();
+            await tokenCache.rejected(usedToken);
           } catch (refreshErr) {
             const rmsg = refreshErr instanceof Error ? refreshErr.message : String(refreshErr);
             console.error(`operator: token refresh after 401 failed: ${rmsg}`);
@@ -572,6 +644,8 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
         tokenProvider,
         // Full containment preflight (OPS-1214): HOLD + rate-limit probe.
         (opts.rolePreflight ?? makeDefaultPreflight)(tokenProvider),
+        // A run that Linear rejects re-mints and retries once (CER-3309).
+        tokenCache,
       );
       roleSchedulers.push(handle);
       console.error(`operator: role "${role.name}" scheduled (${role.cadence})`);

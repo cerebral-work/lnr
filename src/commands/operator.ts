@@ -74,6 +74,10 @@ interface ReadyzReport {
   ok: boolean;
   cfEnv: { accountId: boolean; queueId: boolean; apiToken: boolean };
   tokenAgeSec: number;
+  /** Successful token mints since start (CER-3309). Absent from older daemons. */
+  tokenMints?: number;
+  /** "failing" while Linear rejects fresh tokens (CER-3309). Absent from older daemons. */
+  auth?: "ok" | "failing";
   lastPoll: string | null;
   queueDepth: number;
 }
@@ -266,6 +270,7 @@ export async function checkOperator(
       `operator readiness: ${report.ok ? "READY" : "NOT READY"}\n` +
         `  cf env: accountId=${cf.accountId} queueId=${cf.queueId} apiToken=${cf.apiToken}\n` +
         `  token age: ${report.tokenAgeSec}s\n` +
+        (report.auth !== undefined ? `  linear auth: ${report.auth} (mints: ${report.tokenMints ?? "?"})\n` : "") +
         `  last poll: ${report.lastPoll ?? "(never)"}\n` +
         `  queue depth: ${report.queueDepth}\n`,
     );

@@ -42,6 +42,18 @@ export function cliError(err: unknown): CliError {
   return new CliError("other", message.split(/\n|: \{"response"/)[0]);
 }
 
+/**
+ * True when Linear rejected the credential: HTTP 401, or a GraphQL
+ * AUTHENTICATION_ERROR (the SDK raises it as "Authentication required, not
+ * authenticated - ..." with no status code in the message). A bare `401` in a
+ * message also counts, for fetch-based callers that report the status as text.
+ */
+export function isAuthError(err: unknown): boolean {
+  if (cliError(err).kind === "auth") return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /\b401\b/.test(message);
+}
+
 export function errorEnvelope(err: unknown, fallbackHint = "") {
   const e = cliError(err);
   const redact = (text: string) => {
