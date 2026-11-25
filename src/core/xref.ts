@@ -14,6 +14,41 @@ interface GhPR {
   url: string;
 }
 
+// RFC 8259 §7 forbids unescaped U+0000..U+001F inside JSON string literals
+// (any literal ESC inside a PR body is serialized by `gh` as `\u001b`), so
+// raw ESC (`\x1b`) CSI/OSC/Fe sequences in `gh --json` stdout are always
+// terminal decoration (e.g. `CLICOLOR_FORCE=1` or `GH_FORCE_TTY`).
+const ANSI_ESCAPE_RE =
+  /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]/g;
+// Leading braille spinner frames (`⣾⣽⣻⢿⡿⣟⣯⣷`), carriage returns, or UTF-8 BOM
+// emitted ahead of `[` when a PTY/wrapper shares stdout.
+const LEADING_SPINNER_RE = /^[\s\uFEFF\r\u2800-\u28FF]+/;
+
+export function ghSubprocessEnv(
+  baseEnv: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...baseEnv,
+    GH_SPINNER_DISABLED: "1",
+    GH_PROMPT_DISABLED: "1",
+    GH_PAGER: "cat",
+    NO_COLOR: "1",
+    CLICOLOR: "0",
+    CLICOLOR_FORCE: "0",
+    FORCE_COLOR: "0",
+  };
+  delete env.GH_FORCE_TTY;
+  return env;
+}
+
+export function parseGhJson<T>(stdout: string): T {
+  const stripped = stdout
+    .replace(ANSI_ESCAPE_RE, "")
+    .replace(LEADING_SPINNER_RE, "")
+    .trim();
+  return JSON.parse(stripped) as T;
+}
+
 /**
  * List PRs via the GitHub CLI. The only non-Linear dependency in the suite —
  * degrades with a clear error (never an unhandled crash) if `gh` is missing or
@@ -31,7 +66,10 @@ async function ghPRList(
   if (repo) args.push("--repo", repo);
   let stdout: string;
   try {
-    ({ stdout } = await pexec("gh", args, { maxBuffer: 20_000_000 }));
+    ({ stdout } = await pexec("gh", args, {
+      maxBuffer: 20_000_000,
+      env: ghSubprocessEnv(process.env),
+    }));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
@@ -39,7 +77,7 @@ async function ghPRList(
         `authenticated (\`gh auth status\`). ${msg}`,
     );
   }
-  return JSON.parse(stdout) as GhPR[];
+  return parseGhJson<GhPR[]>(stdout);
 }
 
 // A PR's ticket is named where the conventions put it (RFC §4.4) — NOT in
