@@ -151,21 +151,23 @@ describe("operator token re-mint (CER-3309)", () => {
       expect(body.tokenMints).toBe(2);
       expect(body.tokenAgeSec).toBeLessThan(5);
       expect(JSON.stringify(body)).not.toContain("tok-");
+      // Positive control for the not-ready case below: the same probe exits 0 here.
+      expect(await runCheck(handle.socketPath)).toBe(0);
     } finally {
       await handle.shutdown();
       linear.stop();
     }
   });
 
-  test("a queue event that gets Linear's 401 re-mints for the next event", async () => {
+  test("a queue event that gets Linear's 401 re-mints, and the next event uses the fresh token", async () => {
     const linear = fakeLinear(new Set(["tok-fresh"]));
     const mint = sequenceMinter(["tok-expired", "tok-fresh"]);
-    const event: AgentSessionEvent = {
+    const event = (id: string): AgentSessionEvent => ({
       type: "AgentSessionEvent",
       action: "created",
       promptContext: '<issue identifier="CER-3309"/>',
-      agentSession: { id: "session-1", issueId: "issue-1" },
-    };
+      agentSession: { id, issueId: "issue-1" },
+    });
     const handle = await startOperator({
       ...baseOptions(),
       tokenMinter: mint.minter,
@@ -173,11 +175,13 @@ describe("operator token re-mint (CER-3309)", () => {
         await new LinearClient({ accessToken: token, apiUrl: linear.url }).viewer;
         return { thoughtId: "t", responseId: "r", movedToStateId: null };
       },
-      queueFetcher: queue([event]),
+      queueFetcher: queue([event("session-1"), event("session-2")]),
     });
     try {
-      await waitFor(() => mint.mints() === 2);
-      expect(linear.seen).toEqual(["tok-expired"]);
+      await waitFor(() => linear.seen.length === 2);
+      // The first event is acked (never retried, so it cannot post twice); the second uses the new token.
+      expect(linear.seen).toEqual(["tok-expired", "tok-fresh"]);
+      expect(mint.mints()).toBe(2);
     } finally {
       await handle.shutdown();
       linear.stop();

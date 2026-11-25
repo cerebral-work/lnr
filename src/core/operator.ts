@@ -153,7 +153,7 @@ interface TokenStatus {
 }
 
 /** An in-memory token cache. The token value never leaves here except to Linear. */
-interface TokenCache extends TokenAuth {
+export interface TokenCache extends TokenAuth {
   getToken(): string;
   /** Mint a new token. Concurrent callers share one mint. */
   refreshToken(): Promise<void>;
@@ -166,7 +166,7 @@ interface TokenCache extends TokenAuth {
  * scopes, and the minter always asks for the same scopes, so a re-mint never
  * revokes the token another run holds.
  */
-function makeTokenCache(minter: TokenMinter): TokenCache {
+export function makeTokenCache(minter: TokenMinter): TokenCache {
   let cached: string | null = null;
   // Monotonic, so wall-clock corrections cannot make the age negative.
   let mintedAtMonotonicMs = performance.now();
@@ -205,12 +205,20 @@ function makeTokenCache(minter: TokenMinter): TokenCache {
     async rejected(token) {
       // A rejection of a token that was already replaced says nothing about the current one.
       if (token !== cached) return;
+      // A mint already replacing this token answers this rejection too: two runs
+      // that hit the same expiry are one rejection, not a failing fresh token.
+      if (minting) {
+        await minting;
+        return;
+      }
       rejections += 1;
       if (rejections > 1 && performance.now() - mintedAtMonotonicMs < MIN_REMINT_INTERVAL_MS) return;
       await refreshToken();
     },
     succeeded() {
+      // A run that worked proves the current token, whatever a failed mint said.
       rejections = 0;
+      mintFailed = false;
     },
     status() {
       return {

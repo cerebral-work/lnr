@@ -28,7 +28,9 @@ export type TokenProvider = () => string;
 /**
  * The daemon's token cache, as seen by a role run (CER-3309). The app token
  * expires after 30 days and has no refresh token, so a run that Linear rejects
- * re-mints and retries once.
+ * re-mints and retries once. The retry runs the whole role again, as the next
+ * tick would: role runners must already be safe to repeat, because every tick
+ * repeats them.
  */
 export interface TokenAuth {
   /** Linear rejected `token`. Records it, and re-mints when `token` is still the current one. */
