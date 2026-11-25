@@ -40,6 +40,7 @@ pub mod links;
 pub mod loops;
 pub mod math;
 pub mod models;
+pub mod offload;
 pub mod org_psych;
 pub mod plan;
 pub mod priority;

@@ -12,3 +12,4 @@ This directory holds the LeanSpec registry for `lnr` (`linearctl`). Every spec i
 | [0006](0006-intake-plan-submission-and-runbook.md) | Canonical setup runbook and escapement `PlanSubmission` intake mapping | complete | high |
 | [0007](0007-reject-unresolved-op-reference-key.md) | Reject an unresolved `op://` 1Password reference in `LINEAR_API_KEY` before any network call | complete | medium |
 | [0008](0008-bounded-transports-and-mesh-mcp.md) | Bounded transports, read-only MCP, and Cortex evidence integration | complete | high |
+| [0009](0009-cortex-offload-taskspec-mapper.md) | Zero-I/O Cortex Spec 0121 `TaskSpec` and `service-offload-intake` mapper (`OPS-2251`) | complete | high |
