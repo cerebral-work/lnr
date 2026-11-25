@@ -35,6 +35,7 @@ import { runEventLoop, type AgentSessionEvent, type EventLoopResult } from "./wa
 import {
   makeDefaultPreflight,
   scheduleRole,
+  type Preflight,
   type RoleSchedulerHandle,
   type TokenProvider,
 } from "./scheduler.js";
@@ -122,6 +123,12 @@ export interface OperatorOptions {
   roles?: RoleDescriptor[];
   /** Override the role runners (tests inject stubs; default loads `src/roles/*`). */
   roleRunners?: Record<string, (token: string) => Promise<unknown>>;
+  /**
+   * Override the per-tick role preflight. Default {@link makeDefaultPreflight}
+   * (HOLD + Linear rate-limit probe); tests pass a pass-through so no role tick
+   * calls api.linear.app.
+   */
+  rolePreflight?: (token: TokenProvider) => Preflight;
   /**
    * HMAC config override (tests inject; default reads
    * LINEARCTL_QUEUE_HMAC_KEY / _KEY_PREV / _MODE from process.env). Resolved
@@ -564,7 +571,7 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
         runner as (token: string) => Promise<RoleRunResult>,
         tokenProvider,
         // Full containment preflight (OPS-1214): HOLD + rate-limit probe.
-        makeDefaultPreflight(tokenProvider),
+        (opts.rolePreflight ?? makeDefaultPreflight)(tokenProvider),
       );
       roleSchedulers.push(handle);
       console.error(`operator: role "${role.name}" scheduled (${role.cadence})`);
