@@ -3,7 +3,7 @@
  * Content-Length counts bytes. Decode UTF-8 only after a complete bounded frame.
  */
 import { createServer, connect, type Socket, type Server } from "node:net";
-import { chmodSync, mkdirSync, unlinkSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { homedir } from "node:os";
 
@@ -102,6 +102,37 @@ function serializeResponse(res: ControlResponse): string {
   return head + body;
 }
 
+/**
+ * Remove a socket file that no server answers on, so a start after a SIGKILL
+ * succeeds. The operator's socket lives on an emptyDir, which survives a
+ * container restart, and a killed process never runs close(). Fails closed:
+ * a non-socket file, a server that accepts, a probe that times out, or any
+ * error other than ECONNREFUSED is a refusal, never an unlink.
+ */
+async function clearStaleSocket(socketPath: string): Promise<void> {
+  let isSocket: boolean;
+  try {
+    isSocket = lstatSync(socketPath).isSocket();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw err;
+  }
+  if (!isSocket) throw new Error(`${socketPath} exists and is not a socket; refusing to replace it`);
+  const stale = await new Promise<boolean>((resolve) => {
+    const probe = connect(socketPath);
+    const guard = setTimeout(() => { probe.destroy(); resolve(false); }, 1000);
+    probe.once("connect", () => { clearTimeout(guard); probe.destroy(); resolve(false); });
+    probe.once("error", (err: NodeJS.ErrnoException) => {
+      clearTimeout(guard);
+      resolve(err.code === "ECONNREFUSED" || err.code === "ENOENT");
+    });
+  });
+  if (!stale) throw new Error(`a control server is already listening on ${socketPath}`);
+  try { unlinkSync(socketPath); } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+}
+
 /** Bound ingress time and memory; pause reads before invoking the single handler. */
 export function startControlServer(
   handler: ControlHandler,
@@ -142,20 +173,22 @@ export function startControlServer(
       }
     });
   });
-  server.once("error", reject);
-  server.listen(socketPath, () => {
-    server.removeListener("error", reject);
-    try { chmodSync(socketPath, 0o600); } catch { /* 0700 parent still gates access. */ }
-    let closing: Promise<void> | undefined;
-    const close = (): Promise<void> => closing ??= new Promise<void>((done) => {
-      for (const socket of sockets) socket.destroy();
-      server.close(() => {
-        try { unlinkSync(socketPath); } catch { /* already gone */ }
-        done();
+  clearStaleSocket(socketPath).then(() => {
+    server.once("error", reject);
+    server.listen(socketPath, () => {
+      server.removeListener("error", reject);
+      try { chmodSync(socketPath, 0o600); } catch { /* 0700 parent still gates access. */ }
+      let closing: Promise<void> | undefined;
+      const close = (): Promise<void> => closing ??= new Promise<void>((done) => {
+        for (const socket of sockets) socket.destroy();
+        server.close(() => {
+          try { unlinkSync(socketPath); } catch { /* already gone */ }
+          done();
+        });
       });
+      resolve({ socketPath, close });
     });
-    resolve({ socketPath, close });
-  });
+  }, reject);
   return promise;
 }
 
