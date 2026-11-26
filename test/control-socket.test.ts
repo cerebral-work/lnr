@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createServer, connect, type Socket } from "node:net";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeControlClient, startControlServer, MAX_CONTROL_BODY_BYTES } from "../src/lib/control-socket.js";
@@ -110,5 +111,58 @@ describe("bounded control transport", () => {
       socket.on("connect", () => socket.write("POST /\r\nContent-Length: 100\r\n\r\nx"));
       socket.on("close", () => done()); socket.on("error", reject);
     });
+  });
+});
+
+/**
+ * The operator's socket lives on an emptyDir, which survives a container
+ * restart. A SIGKILL (OOM kill, liveness kill) skips close(), so the socket
+ * file stays behind and every later start failed with "Failed to listen"
+ * (linearctl-operator, 2026-11-26).
+ */
+describe("stale socket on startup", () => {
+  const ok = () => ({ status: 200, body: "up" });
+
+  async function killedServerLeavesSocket(socketPath: string): Promise<void> {
+    const mod = join(import.meta.dir, "..", "src", "lib", "control-socket.ts");
+    const code = `const { startControlServer } = await import(${JSON.stringify(mod)});
+      await startControlServer(() => ({ status: 200, body: "old" }), { socketPath: ${JSON.stringify(socketPath)} });
+      console.log("ready"); setInterval(() => {}, 1000);`;
+    const child = spawn(process.execPath, ["-e", code], { stdio: ["ignore", "pipe", "inherit"] });
+    await new Promise<void>((resolve, reject) => {
+      const guard = setTimeout(() => reject(new Error("child server never became ready")), 10_000);
+      child.stdout!.on("data", (d) => { if (String(d).includes("ready")) { clearTimeout(guard); resolve(); } });
+    });
+    const exited = new Promise((r) => child.once("exit", r));
+    child.kill("SIGKILL");
+    await exited;
+  }
+
+  test("starts over a socket left by a SIGKILLed server", async () => {
+    const socketPath = path();
+    await killedServerLeavesSocket(socketPath);
+    expect(lstatSync(socketPath).isSocket()).toBe(true);
+    const server = await startControlServer(ok, { socketPath });
+    cleanups.push(() => server.close());
+    const res = await makeControlClient(socketPath).request("GET", "/readyz");
+    expect(res.status).toBe(200);
+    expect(res.body).toBe("up");
+  });
+
+  test("refuses a socket that a live server answers on, and leaves that server serving", async () => {
+    const socketPath = path();
+    const first = await startControlServer(() => ({ status: 200, body: "first" }), { socketPath });
+    cleanups.push(() => first.close());
+    await expect(startControlServer(ok, { socketPath })).rejects.toThrow(/already listening/);
+    const res = await makeControlClient(socketPath).request("GET", "/readyz");
+    expect(res.body).toBe("first");
+  });
+
+  test("refuses to replace a file that is not a socket", async () => {
+    const socketPath = path();
+    writeFileSync(socketPath, "keep me");
+    await expect(startControlServer(ok, { socketPath })).rejects.toThrow(/not a socket/);
+    expect(existsSync(socketPath)).toBe(true);
+    expect(readFileSync(socketPath, "utf8")).toBe("keep me");
   });
 });
