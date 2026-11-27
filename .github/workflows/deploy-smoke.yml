@@ -1,0 +1,59 @@
+name: Deploy smoke
+
+# Runs the real operator image in a kind pod under the chart's securityContext,
+# then kills the container in place and asserts it comes back in the same pod.
+# Catches runtime-only deploy failures that unit tests miss (control-socket dir
+# chmod EPERM; stale socket on the emptyDir after a container restart, lnr#269).
+# The logic lives in scripts/deploy-smoke.sh so it also runs locally.
+# No secrets are used. Fake Linear and empty Cloudflare values keep it offline.
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "deploy/chart/**"
+      - "deploy/ci/**"
+      - "Dockerfile"
+      - "package.json"
+      - "bun.lock"
+      - "scripts/deploy-smoke.sh"
+      - ".github/workflows/deploy-smoke.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "deploy/chart/**"
+      - "deploy/ci/**"
+      - "Dockerfile"
+      - "package.json"
+      - "bun.lock"
+      - "scripts/deploy-smoke.sh"
+      - ".github/workflows/deploy-smoke.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kind-restart:
+    name: Operator pod survives an in-place restart
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # Install kind only; scripts/deploy-smoke.sh creates the cluster so local
+      # and CI runs use the same path.
+      - uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          version: v0.33.0
+          install_only: true
+
+      - name: Deploy smoke (kind)
+        env:
+          # kind v0.33.0 default node image (v1.37.0), pinned by digest.
+          KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+        run: scripts/deploy-smoke.sh
