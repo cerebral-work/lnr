@@ -17,6 +17,12 @@ metadata:
     app.kubernetes.io/version: {{ .Chart.AppVersion }}
 spec:
   replicas: {{ .Values.deployment.replicas }}
+  # Recreate by default: the old pod stops before the new one starts, so two
+  # operators never poll the queue or run roles at once (CER-4175).
+  {{- with .Values.deployment.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: linearctl
@@ -29,6 +35,9 @@ spec:
     spec:
       serviceAccountName: {{ .Release.Name }}-sa
       automountServiceAccountToken: false
+      {{- with .Values.deployment.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       imagePullSecrets:
         {{- toYaml .Values.imagePullSecrets | nindent 8 }}
       securityContext:
@@ -40,7 +49,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: linearctl-operator
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}{{ with .Values.image.digest }}@{{ . }}{{ end }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false

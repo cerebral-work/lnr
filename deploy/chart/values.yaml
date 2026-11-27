@@ -12,6 +12,9 @@ image:
   repository: harbor.unsigned.gg/platform/linearctl
   pullPolicy: IfNotPresent
   tag: "git-000000000000"  # placeholder — ArgoCD overrides with the exact source SHA tag
+  # Optional image digest (sha256:...). When set, the image renders as
+  # repository:tag@digest and the kubelet pulls by digest.
+  digest: ""
 
 # imagePullSecrets — the daemon pulls from Harbor via the platform-pull
 # dockerconfigjson from OpenBao (ExternalSecret `linearctl-harbor-pull`).
@@ -22,6 +25,13 @@ imagePullSecrets:
 # identity, not a fleet).
 deployment:
   replicas: 1
+  # Recreate stops the old pod before starting the new one, so a rollout
+  # never runs two operators at once (CER-4175). RollingUpdate overlapped them.
+  strategy:
+    type: Recreate
+  # Optional PriorityClass name. Unset, the pod runs at priority 0 and any
+  # higher-priority pod can preempt it.
+  priorityClassName: ""
   args:
     - "operator"
     - "--role"
