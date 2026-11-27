@@ -15,7 +15,7 @@ concurrency:
 jobs:
   check:
     name: typecheck · test · compile-smoke
-    runs-on: ubuntu-latest
+    runs-on: {group: ent-default, labels: [self-hosted]}  # estate runner fleet (SOP: ci-runner-always-internal)
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -83,7 +83,7 @@ jobs:
 
   rust:
     name: rust · fmt · clippy · test · deny
-    runs-on: ubuntu-latest
+    runs-on: {group: ent-default, labels: [ci-rust]}  # estate Rust toolchain runner (SOP: ci-runner-always-internal)
     env:
       CARGO_INCREMENTAL: "0"
       CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
@@ -141,7 +141,7 @@ jobs:
   # Added next to the jobs above; it replaces none of them.
   xtask-ci:
     name: cargo xtask ci
-    runs-on: ubuntu-latest
+    runs-on: {group: ent-default, labels: [ci-rust]}  # estate Rust toolchain runner (SOP: ci-runner-always-internal)
     timeout-minutes: 60
     env:
       CARGO_TERM_COLOR: always

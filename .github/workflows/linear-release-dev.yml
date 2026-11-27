@@ -19,7 +19,7 @@ permissions:
 jobs:
   linear-release-dev:
     name: Sync dev build to Linear
-    runs-on: ubuntu-latest
+    runs-on: {group: ent-default, labels: [self-hosted]}  # estate runner fleet (SOP: ci-runner-always-internal)
     steps:
       - name: Check for dev access key
         id: gate

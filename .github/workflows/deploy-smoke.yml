@@ -40,6 +40,9 @@ concurrency:
 jobs:
   kind-restart:
     name: Operator pod survives an in-place restart
+    # Requires Docker daemon for kind; estate ARC runners have no Docker daemon.
+    # Scoped off pull_request so PR checks run 100% self-hosted (SOP: ci-runner-always-internal).
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

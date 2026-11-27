@@ -36,7 +36,7 @@ permissions:
 jobs:
   linear-release:
     name: Sync release to Linear
-    runs-on: ubuntu-latest
+    runs-on: {group: ent-default, labels: [self-hosted]}  # estate runner fleet (SOP: ci-runner-always-internal)
     steps:
       - name: Check for access key
         id: gate
