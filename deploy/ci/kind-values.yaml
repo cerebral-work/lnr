@@ -1,0 +1,18 @@
+# Helm values overlay for scripts/deploy-smoke.sh (kind cluster, no registry).
+# The image is built locally and loaded into kind, so it is never pulled.
+# Secret names and keys stay the chart defaults; the script creates them
+# with fake values.
+image:
+  repository: lnr-operator-ci
+  tag: ci
+  pullPolicy: Never
+
+# kind has no Harbor pull secret and the image is preloaded.
+imagePullSecrets: []
+
+# The test asserts liveness only. A NetworkPolicy would also need a CNI that
+# enforces it, and a PDB blocks nothing here.
+networkPolicy:
+  enabled: false
+podDisruptionBudget:
+  enabled: false
