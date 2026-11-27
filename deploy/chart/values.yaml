@@ -150,3 +150,19 @@ mcp:
     image: "supercorp/supergateway:latest"
   service:
     type: ClusterIP
+
+# PrometheusRule — operator alerts from kube-state-metrics and cAdvisor series
+# (the daemon exposes no metrics port). Requires the PrometheusRule CRD
+# (kube-prometheus-stack). Alerts route by `severity` in Alertmanager.
+prometheusRule:
+  enabled: false
+  severity: warning
+  # LinearctlOperatorUnavailable: no available replica for this long. Readiness
+  # fails on a crash loop, a stale queue poll, or a rejected Linear token.
+  unavailableFor: 15m
+  # LinearctlOperatorRestarting: container restarts within one hour.
+  restartsPerHour: 3
+  # LinearctlOperatorMemoryHigh: working set above this % of the limit, 15m.
+  memoryPercent: 80
+  # Extra labels on the PrometheusRule object.
+  labels: {}

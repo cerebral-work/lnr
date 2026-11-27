@@ -1,0 +1,66 @@
+{{- if .Values.prometheusRule.enabled }}
+{{- /*
+Alerts for the operator, from kube-state-metrics and cAdvisor series (the
+daemon exposes no metrics port). Readiness already fails when the queue poll
+is stale or Linear rejects the token (src/core/operator.ts /readyz), so
+"no available replica" covers a stalled queue and failing auth as well as a
+crash loop.
+*/ -}}
+{{- $ns := .Release.Namespace }}
+{{- $deploy := printf "%s-operator" .Release.Name }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-operator
+  labels:
+    app.kubernetes.io/name: linearctl
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: linearctl-operator
+      rules:
+        - alert: LinearctlOperatorUnavailable
+          expr: |
+            max(kube_deployment_status_replicas_available{namespace="{{ $ns }}", deployment="{{ $deploy }}"}) < 1
+              or absent(kube_deployment_status_replicas_available{namespace="{{ $ns }}", deployment="{{ $deploy }}"})
+          for: {{ .Values.prometheusRule.unavailableFor }}
+          labels:
+            severity: {{ .Values.prometheusRule.severity }}
+          annotations:
+            summary: "linearctl operator has had no ready pod for {{ .Values.prometheusRule.unavailableFor }}"
+            description: >-
+              Deployment {{ $ns }}/{{ $deploy }} has no available replica. Readiness fails
+              on a crash loop, a queue poll older than three intervals, or a Linear token
+              that keeps being rejected. Check `kubectl -n {{ $ns }} get pods`, the
+              container logs, and `kubectl -n {{ $ns }} describe pod`.
+        - alert: LinearctlOperatorRestarting
+          expr: |
+            max(increase(kube_pod_container_status_restarts_total{namespace="{{ $ns }}", container="linearctl-operator"}[1h])) >= {{ .Values.prometheusRule.restartsPerHour }}
+          labels:
+            severity: {{ .Values.prometheusRule.severity }}
+          annotations:
+            summary: "linearctl operator restarted {{ .Values.prometheusRule.restartsPerHour }} or more times in the last hour"
+            description: >-
+              The operator container in {{ $ns }} is restarting. Read the previous
+              container's logs (`kubectl -n {{ $ns }} logs <pod> --previous`) and the
+              last termination reason (OOMKilled, liveness failure, or exit code).
+        - alert: LinearctlOperatorMemoryHigh
+          expr: |
+            max(container_memory_working_set_bytes{namespace="{{ $ns }}", container="linearctl-operator"})
+              / max(kube_pod_container_resource_limits{namespace="{{ $ns }}", container="linearctl-operator", resource="memory"})
+              * 100 > {{ .Values.prometheusRule.memoryPercent }}
+          for: 15m
+          labels:
+            severity: {{ .Values.prometheusRule.severity }}
+          annotations:
+            summary: "linearctl operator memory is above {{ .Values.prometheusRule.memoryPercent }}% of its limit"
+            description: >-
+              The operator's working set in {{ $ns }} has been above the threshold for
+              15 minutes. It grows over time (CER-4207); at the limit the kernel kills
+              the container.
+{{- end }}
