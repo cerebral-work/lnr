@@ -15,7 +15,8 @@ concurrency:
 jobs:
   check:
     name: typecheck · test · compile-smoke
-    runs-on: {group: ent-default, labels: [self-hosted]}  # estate runner fleet (SOP: ci-runner-always-internal)
+    runs-on: {group: ent-cygnus, labels: [cygnus]}  # hardened Kata ARC fleet
+    container: harbor.unsigned.gg/platform/ci-rust-runner:v0.1.14@sha256:d73d3748c0f22e7386109d12b01ccdf7282b0f529aab2c629b4e5ed558d42bc1
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -83,7 +84,8 @@ jobs:
 
   rust:
     name: rust · fmt · clippy · test · deny
-    runs-on: {group: ent-default, labels: [ci-rust]}  # estate Rust toolchain runner (SOP: ci-runner-always-internal)
+    runs-on: {group: ent-cygnus, labels: [cygnus]}  # hardened Kata ARC fleet
+    container: harbor.unsigned.gg/platform/ci-rust-runner:v0.1.14@sha256:d73d3748c0f22e7386109d12b01ccdf7282b0f529aab2c629b4e5ed558d42bc1
     env:
       CARGO_INCREMENTAL: "0"
       CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
@@ -141,7 +143,8 @@ jobs:
   # Added next to the jobs above; it replaces none of them.
   xtask-ci:
     name: cargo xtask ci
-    runs-on: {group: ent-default, labels: [ci-rust]}  # estate Rust toolchain runner (SOP: ci-runner-always-internal)
+    runs-on: {group: ent-cygnus, labels: [cygnus]}  # hardened Kata ARC fleet
+    container: harbor.unsigned.gg/platform/ci-rust-runner:v0.1.14@sha256:d73d3748c0f22e7386109d12b01ccdf7282b0f529aab2c629b4e5ed558d42bc1
     timeout-minutes: 60
     env:
       CARGO_TERM_COLOR: always

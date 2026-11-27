@@ -36,7 +36,8 @@ permissions:
 jobs:
   linear-release:
     name: Sync release to Linear
-    runs-on: {group: ent-default, labels: [self-hosted]}  # estate runner fleet (SOP: ci-runner-always-internal)
+    runs-on: {group: ent-cygnus, labels: [cygnus]}  # hardened Kata ARC fleet
+    container: harbor.unsigned.gg/platform/ci-rust-runner:v0.1.14@sha256:d73d3748c0f22e7386109d12b01ccdf7282b0f529aab2c629b4e5ed558d42bc1
     steps:
       - name: Check for access key
         id: gate
