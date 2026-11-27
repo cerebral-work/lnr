@@ -16,7 +16,7 @@
     "whoami": "bun run src/index.ts whoami",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "build": "bun build ./src/index.ts --compile --minify --define 'process.env.DEV=\"false\"' --outfile dist/lnr && cp -f dist/lnr dist/linearctl",
+    "build": "bun build ./src/main.ts --compile --splitting --minify --define 'process.env.DEV=\"false\"' --outfile dist/lnr && cp -f dist/lnr dist/linearctl",
     "dev:watch": "bun --watch run src/index.ts",
     "test:watch": "bun test --watch",
     "test:fast": "bun test --filter",

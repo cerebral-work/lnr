@@ -35,7 +35,10 @@ import { usageError } from "../lib/errors.js";
 
 import { readFileSync } from "node:fs";
 import { printJson } from "../lib/output.js";
-import { DEFAULT_OPERATOR_SOCKET, makeControlClient } from "../lib/control-socket.js";
+import { DEFAULT_OPERATOR_SOCKET } from "../lib/control-socket.js";
+import { checkOperator, healthOperator, parseTimeout } from "../lib/operator-probe.js";
+
+export { checkOperator, healthOperator, parseTimeout };
 import { startOperator, type OperatorOptions } from "../core/operator.js";
 import {
   emitOperatorCrdsJson,
@@ -69,36 +72,6 @@ export interface OperatorCommandOptions {
   reconcile?: string;
 }
 
-/** The parsed /readyz report body (presence-only — no secret values). */
-interface ReadyzReport {
-  ok: boolean;
-  cfEnv: { accountId: boolean; queueId: boolean; apiToken: boolean };
-  tokenAgeSec: number;
-  /** Successful token mints since start (CER-3309). Absent from older daemons. */
-  tokenMints?: number;
-  /** "failing" while Linear rejects fresh tokens (CER-3309). Absent from older daemons. */
-  auth?: "ok" | "failing";
-  lastPoll: string | null;
-  queueDepth: number;
-}
-
-/** The parsed /healthz report body (PR #120 liveness — uptime + queue depth). */
-interface HealthReport {
-  ok: boolean;
-  uptime: number;
-  queueDepth: number;
-}
-
-export function parseTimeout(raw: string | number | undefined): number {
-  const envVal = process.env.LINEARCTL_OPERATOR_TIMEOUT;
-  const target = raw !== undefined ? raw : envVal;
-  if (target === undefined || target === "") return 1000;
-  const n = Number(target);
-  if (!Number.isFinite(n) || n <= 0) {
-    throw usageError(`--timeout must be a positive number of milliseconds, got "${target}"`);
-  }
-  return Math.floor(n);
-}
 
 function parsePollInterval(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
@@ -231,91 +204,4 @@ export async function operator(opts: OperatorCommandOptions): Promise<void> {
   // Block until the process is killed (startOperator wired the signal handlers).
   // `startOperator`'s shutdown handler calls process.exit(0); we just hold here.
   return new Promise(() => {});
-}
-
-/**
- * Probe a running operator's `/readyz` over the Unix socket + report.
- *
- * Print the readiness report (presence-only CF env, token age, last poll,
- * queue depth) and exit 0 if the daemon is ready to consume / 1 otherwise.
- * A connection failure (no daemon, socket stale) is a not-ready result with a
- * diagnostic on stderr — it is NOT a thrown exception, so the runbook's step-7
- * smoke gets a clean exit code rather than a stack trace.
- *
- * `--json` prints the raw /readyz body as JSON; the default prints a human report.
- */
-export async function checkOperator(
-  socketPath: string,
-  json?: boolean,
-  timeoutMs: number = 1000,
-): Promise<void> {
-  let report: ReadyzReport;
-  try {
-    const client = makeControlClient(socketPath, { connectTimeoutMs: timeoutMs });
-    const res = await client.request("GET", "/readyz");
-    if (res.status !== 200) {
-      throw new Error(`operator --check: /readyz returned HTTP ${res.status}`);
-    }
-    report = JSON.parse(res.body ?? "") as ReadyzReport;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`operator --check: not ready — ${msg}`);
-  }
-
-  if (json) {
-    printJson(report);
-  } else {
-    const cf = report.cfEnv;
-    process.stdout.write(
-      `operator readiness: ${report.ok ? "READY" : "NOT READY"}\n` +
-        `  cf env: accountId=${cf.accountId} queueId=${cf.queueId} apiToken=${cf.apiToken}\n` +
-        `  token age: ${report.tokenAgeSec}s\n` +
-        (report.auth !== undefined ? `  linear auth: ${report.auth} (mints: ${report.tokenMints ?? "?"})\n` : "") +
-        `  last poll: ${report.lastPoll ?? "(never)"}\n` +
-        `  queue depth: ${report.queueDepth}\n`,
-    );
-  }
-  if (!report.ok) throw new Error("operator probe reported unhealthy; inspect the report on stdout.");
-}
-
-/**
- * Probe a running operator's `/healthz` over the Unix socket + report (PR #120).
- *
- * Liveness probe: "is the process alive?" — distinct from `--check`'s
- * "is it able to consume?" readiness. Prints the liveness report (uptime +
- * queue depth) and exits 0 if the daemon is alive / 1 otherwise. A connection
- * failure (no daemon, socket stale) is a not-alive result with a diagnostic on
- * stderr — not a thrown exception — so the kubelet exec liveness probe gets a
- * clean exit code rather than a stack trace.
- *
- * `--json` prints the raw /healthz body as JSON; the default prints a human report.
- */
-export async function healthOperator(
-  socketPath: string,
-  json?: boolean,
-  timeoutMs: number = 1000,
-): Promise<void> {
-  let report: HealthReport;
-  try {
-    const client = makeControlClient(socketPath, { connectTimeoutMs: timeoutMs });
-    const res = await client.request("GET", "/healthz");
-    if (res.status !== 200) {
-      throw new Error(`operator --health: /healthz returned HTTP ${res.status}`);
-    }
-    report = JSON.parse(res.body ?? "") as HealthReport;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`operator --health: not alive — ${msg}`);
-  }
-
-  if (json) {
-    printJson(report);
-  } else {
-    process.stdout.write(
-      `operator liveness: ${report.ok ? "ALIVE" : "NOT ALIVE"}\n` +
-        `  uptime: ${report.uptime}s\n` +
-        `  queue depth: ${report.queueDepth}\n`,
-    );
-  }
-  if (!report.ok) throw new Error("operator probe reported unhealthy; inspect the report on stdout.");
 }
