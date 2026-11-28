@@ -16,6 +16,8 @@ import { homedir } from "node:os";
  */
 export const DEFAULT_OPERATOR_SOCKET = `${homedir()}/.local/state/linearctl/run/operator.sock`;
 export const DEFAULT_CONNECT_TIMEOUT_MS = 250;
+/** How long the server keeps a replied connection open for the client to close it. */
+export const REPLY_LINGER_MS = 1000;
 export const MAX_CONTROL_HEADER_BYTES = 8192;
 export const MAX_CONTROL_BODY_BYTES = 1_048_576;
 const MAX_FRAME_BYTES = MAX_CONTROL_HEADER_BYTES + 4 + MAX_CONTROL_BODY_BYTES;
@@ -35,6 +37,8 @@ export type ControlHandler = (req: ControlRequest) => Promise<ControlResponse> |
 export interface ControlServer {
   readonly socketPath: string;
   close: () => Promise<void>;
+  /** Server-side connections not yet closed. Stays near 0 between requests. */
+  connectionCount: () => number;
 }
 
 /** Grow geometrically rather than recopying the whole body for every fragment. */
@@ -147,9 +151,21 @@ export function startControlServer(
     sockets.add(socket);
     const buffer = new FrameBuffer();
     let processing = false;
-    const timer = setTimeout(() => socket.destroy(), opts.requestTimeoutMs ?? 30_000);
+    let timer = setTimeout(() => socket.destroy(), opts.requestTimeoutMs ?? 30_000);
     socket.on("close", () => { clearTimeout(timer); sockets.delete(socket); });
     socket.on("error", () => {});
+    // Reply, then make sure the connection closes. The socket is paused while
+    // the handler runs, so resume it to read the client's FIN ("data" is
+    // ignored once processing), and destroy it after a short linger if the
+    // client keeps it open. Without this "close" never fired, and every
+    // request left its socket and frame buffer in `sockets` (CER-4207).
+    const reply = (res: ControlResponse) => {
+      if (socket.destroyed) return;
+      socket.end(serializeResponse(res));
+      socket.resume();
+      clearTimeout(timer);
+      timer = setTimeout(() => socket.destroy(), REPLY_LINGER_MS);
+    };
     socket.on("data", (chunk: Buffer) => {
       if (processing) return;
       try {
@@ -162,14 +178,11 @@ export function startControlServer(
         socket.pause();
         const req: ControlRequest = { method: match[1], path: match[2], headers: parsed.headers, body: parsed.body };
         Promise.resolve().then(() => handler(req))
-          .then((res) => { if (!socket.destroyed) socket.end(serializeResponse(res)); })
-          .catch(() => {
-            if (!socket.destroyed) socket.end(serializeResponse({ status: 500, body: "control handler failed" }));
-          });
+          .then(reply)
+          .catch(() => reply({ status: 500, body: "control handler failed" }));
       } catch {
         processing = true;
-        clearTimeout(timer);
-        socket.end(serializeResponse({ status: 400, body: "invalid control frame" }));
+        reply({ status: 400, body: "invalid control frame" });
       }
     });
   });
@@ -186,7 +199,7 @@ export function startControlServer(
           done();
         });
       });
-      resolve({ socketPath, close });
+      resolve({ socketPath, close, connectionCount: () => sockets.size });
     });
   }, reject);
   return promise;

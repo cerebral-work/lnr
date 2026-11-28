@@ -166,3 +166,52 @@ describe("stale socket on startup", () => {
     expect(readFileSync(socketPath, "utf8")).toBe("keep me");
   });
 });
+
+describe("connections are released after the reply", () => {
+  // CER-4207: the server paused each socket before replying, so it never read
+  // the client's FIN, "close" never fired, and every connection stayed in the
+  // server's socket set (about 6 KB each). The operator grew by one socket per
+  // kubelet probe until the memory limit.
+  async function waitForConnections(server: { connectionCount: () => number }, want: number, ms = 3000) {
+    const deadline = Date.now() + ms;
+    while (server.connectionCount() !== want && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+    return server.connectionCount();
+  }
+
+  test("sequential requests leave no open server connections", async () => {
+    const socketPath = path();
+    const server = await startControlServer(async () => ({ status: 200, body: "{\"ok\":true}" }), { socketPath });
+    cleanups.push(() => server.close());
+    const client = makeControlClient(socketPath);
+    for (let i = 0; i < 200; i++) expect((await client.request("GET", "/healthz")).status).toBe(200);
+    expect(await waitForConnections(server, 0)).toBe(0);
+  });
+
+  test("a client that never closes its side is still released", async () => {
+    const socketPath = path();
+    const server = await startControlServer(async () => ({ status: 200, body: "{\"ok\":true}" }), { socketPath });
+    cleanups.push(() => server.close());
+    // allowHalfOpen: this peer does not answer the server's FIN with its own.
+    const held = connect({ path: socketPath, allowHalfOpen: true });
+    let response = "";
+    held.on("data", (d) => { response += d; });
+    held.on("error", () => {});
+    held.on("connect", () => held.write("GET /healthz\r\nContent-Length: 0\r\n\r\n"));
+    cleanups.push(() => { held.destroy(); });
+    // Bun closes the server side once it reads again after end(); the linger
+    // timer covers a runtime that would keep a half-open peer. Either way the
+    // connection must be released and the full reply delivered.
+    const deadline = Date.now() + 2000;
+    while (!response.includes("{\"ok\":true}") && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+    expect(response).toContain("{\"ok\":true}");
+    expect(await waitForConnections(server, 0, 3000)).toBe(0);
+  });
+
+  test("a rejected frame is released too", async () => {
+    const socketPath = path();
+    const server = await startControlServer(async () => ({ status: 200, body: "{}" }), { socketPath });
+    cleanups.push(() => server.close());
+    for (let i = 0; i < 20; i++) expect(await rawRequest(socketPath, [Buffer.from("BOGUS\r\n\r\n")])).toContain("400");
+    expect(await waitForConnections(server, 0)).toBe(0);
+  });
+});
