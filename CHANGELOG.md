@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.33.0](https://github.com/cerebral-work/lnr/compare/v0.32.1...v0.33.0) (2026-11-28)
+
+
+### Features
+
+* **chart:** operator alerts as an optional PrometheusRule ([94a4440](https://github.com/cerebral-work/lnr/commit/94a44402ec980f51d5a8582b1d69f65e7087e608))
+* **lnr-domain:** add SalesCanonReport and 7-Principle Sales Canon to org_psych ([af2b813](https://github.com/cerebral-work/lnr/commit/af2b813212ae5bfc7703109e607862854b5de0c6))
+* **lnr-domain:** add WesBrownLeadershipReport and WesBrownPrincipleVerdict to org_psych ([98a10b8](https://github.com/cerebral-work/lnr/commit/98a10b8d7e1bdd4444fbbc0822c77d515af8e57b))
+* **lnr-domain:** add zero-I/O Cortex Spec 0121 TaskSpec mapper (OPS-2251, SPEC-0009) ([9f01a8c](https://github.com/cerebral-work/lnr/commit/9f01a8c34433f57aaa44ee76ed63c9e552b3971a))
+
+
+### Bug Fixes
+
+* **chart:** Recreate rollouts, optional priority class and image digest ([799fe1a](https://github.com/cerebral-work/lnr/commit/799fe1a21e9740904468fcf47a955a6a758700da))
+* **operator:** count one rejection per expiry, clear a failed mint on success, drop the bare-401 match (CER-3309) ([d02c5d7](https://github.com/cerebral-work/lnr/commit/d02c5d7d11fd50a9dcbeb86f6fce7ced8030633a))
+* **operator:** put the control socket in a run/ directory the server owns (CER-3309) ([6f98074](https://github.com/cerebral-work/lnr/commit/6f9807470a76454cdb3461ae47ed5565672be846))
+* **operator:** re-mint the app token when Linear rejects it, and report auth in /readyz (CER-3309) ([3cc0d01](https://github.com/cerebral-work/lnr/commit/3cc0d01329e836d0c24b2fdbb40ab5b133b53681))
+* **operator:** release control connections after the reply ([0a92bb0](https://github.com/cerebral-work/lnr/commit/0a92bb06e6e02da4d945572b5e791d0c9a670033))
+* **operator:** remove a stale control socket on start, refuse a live one ([30b20dc](https://github.com/cerebral-work/lnr/commit/30b20dc6390852638d94d9fbccb59a8d34a843fc))
+
+
+### Performance Improvements
+
+* **operator:** answer exec probes without loading the full CLI ([6479256](https://github.com/cerebral-work/lnr/commit/64792562d265da38853a3f6b5cddcfccdb19939a))
+
 ## [0.32.1](https://github.com/cerebral-work/lnr/compare/v0.32.0...v0.32.1) (2026-10-29)
 
 
